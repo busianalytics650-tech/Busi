@@ -243,6 +243,18 @@
   .ov-card .n{ font-size:19px; font-weight:700; }
   .ov-card .l{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-top:2px; }
 
+  /* ---------- Forecast panel ---------- */
+  .metric-toggle{ display:flex; gap:6px; margin-bottom:14px; }
+  .toggle-btn{
+    font-family:inherit; font-size:12.5px; font-weight:600; padding:7px 14px; border-radius:999px;
+    border:1px solid var(--border); background:var(--surface-2); color:var(--text-secondary); cursor:pointer;
+  }
+  .toggle-btn.active{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent-strong); }
+  .toggle-btn:hover:not(.active){ border-color:var(--accent); color:var(--accent-strong); }
+  .forecast-stats{ grid-template-columns:repeat(4,1fr); margin-bottom:16px; }
+  @media (max-width:900px){ .forecast-stats{ grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:520px){ .forecast-stats{ grid-template-columns:1fr; } }
+
   /* ---------- Diagnostic analysis ---------- */
   .diag-grid{ display:grid; grid-template-columns:minmax(260px, 380px) 1fr; gap:24px; align-items:start; }
   @media (max-width:820px){ .diag-grid{ grid-template-columns:1fr; } }
@@ -377,6 +389,28 @@
   </div>
 </div>
 
+<div class="panel" id="forecast-panel">
+  <div class="section-head">
+    <h2>Sales &amp; Expense Forecast</h2>
+    <span class="hint">12-week horizon &middot; 95% prediction interval</span>
+  </div>
+  <div class="metric-toggle" id="forecast-metric-toggle">
+    <button type="button" class="toggle-btn active" data-metric="Sales_Revenue">Sales Revenue</button>
+    <button type="button" class="toggle-btn" data-metric="Total_Expense">Total Expenses</button>
+  </div>
+  <div class="overview-grid forecast-stats" id="forecast-stats"></div>
+  <div class="legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:var(--accent)"></span>Actual</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:var(--line-budget); background-image:repeating-linear-gradient(90deg,var(--line-budget) 0 4px,transparent 4px 7px);"></span>Fitted / forecast</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:var(--accent); opacity:.28; height:10px; border-radius:3px;"></span>95% prediction interval</span>
+  </div>
+  <div class="chart-wrap" id="forecast-chart-wrap">
+    <svg class="chart" id="forecast-chart" viewBox="0 0 960 300" preserveAspectRatio="none"></svg>
+    <div class="chart-tooltip" id="forecast-tooltip"></div>
+  </div>
+  <p class="heatmap-caption" id="forecast-caption"></p>
+</div>
+
 <div class="panel">
   <div class="section-head">
     <h2>Diagnostic Analysis</h2>
@@ -423,14 +457,13 @@
 <div class="panel">
   <div class="section-head">
     <h2>Build Roadmap</h2>
-    <span class="hint">Iteration 2 adds correlation &amp; variance diagnostics — remaining below</span>
+    <span class="hint">Iteration 3 adds the forecast model &amp; prediction intervals — remaining below</span>
   </div>
   <div class="roadmap">
-    <div class="rm-item"><span class="num">03</span>OLS regression models for Sales Revenue &amp; Total Expenses with coefficient significance</div>
-    <div class="rm-item"><span class="num">04</span>12-week forecast with confidence intervals, replacing the preliminary trend estimate</div>
+    <div class="rm-item"><span class="num">04</span>Multivariate OLS regression for Sales Revenue &amp; Total Expenses across all named business drivers, with coefficient significance</div>
     <div class="rm-item"><span class="num">05</span>Interactive what-if simulator across 6+ business drivers</div>
     <div class="rm-item"><span class="num">06</span>Region-level segmentation &amp; top/bottom performer rankings</div>
-    <div class="rm-item"><span class="num">07</span>Model validation panel — R², RMSE, MAPE</div>
+    <div class="rm-item"><span class="num">07</span>Model validation panel for the multivariate regression — R², RMSE, MAPE</div>
   </div>
 </div>
 
@@ -563,17 +596,218 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     return s;
   }
 
-  /* Simple OLS trend line: y = a + b*x, x = week index. Used only for the
-     preliminary forecast tiles — a full multivariate model lands in iteration 2. */
-  function linTrend(points){
-    const n = points.length;
-    if(n < 2) return { a: points.length? points[0][1] : 0, b: 0 };
-    let sx=0, sy=0, sxx=0, sxy=0;
-    for(let i=0;i<n;i++){ const x=points[i][0], y=points[i][1]; sx+=x; sy+=y; sxx+=x*x; sxy+=x*y; }
-    const denom = (n*sxx - sx*sx);
-    const b = denom === 0 ? 0 : (n*sxy - sx*sy) / denom;
-    const a = (sy - b*sx) / n;
-    return { a: a, b: b };
+  /* =================================================================
+     Forecast engine: OLS regression with an optional monthly-seasonal
+     adjustment, used for both the KPI forecast tiles and the dedicated
+     Forecast panel below. General enough to be reused for the
+     multivariate driver regression planned for the next iteration.
+     ================================================================= */
+
+  /* ---- small linear-algebra helpers (matrices as arrays-of-arrays) ---- */
+  function transpose(X){
+    return X[0].map(function(_, j){ return X.map(function(row){ return row[j]; }); });
+  }
+  function matMul(A, B){
+    const rowsA = A.length, inner = B.length, colsB = B[0].length;
+    const out = [];
+    for(let i=0;i<rowsA;i++){
+      out.push(new Array(colsB).fill(0));
+      for(let l=0;l<inner;l++){
+        const a = A[i][l];
+        if(a === 0) continue;
+        for(let j=0;j<colsB;j++) out[i][j] += a * B[l][j];
+      }
+    }
+    return out;
+  }
+  function matVec(A, v){
+    return A.map(function(row){
+      let s = 0;
+      for(let i=0;i<row.length;i++) s += row[i]*v[i];
+      return s;
+    });
+  }
+  /* Gauss-Jordan inversion with partial pivoting. Returns null if singular
+     (guards against collinear seasonal dummies when a selection is too thin). */
+  function invertMatrix(A){
+    const n = A.length;
+    const M = A.map(function(row, i){
+      const aug = row.slice();
+      for(let j=0;j<n;j++) aug.push(i===j ? 1 : 0);
+      return aug;
+    });
+    for(let col=0; col<n; col++){
+      let pivotRow = col, maxVal = Math.abs(M[col][col]);
+      for(let r=col+1;r<n;r++){ if(Math.abs(M[r][col]) > maxVal){ maxVal = Math.abs(M[r][col]); pivotRow = r; } }
+      if(maxVal < 1e-9) return null;
+      if(pivotRow !== col){ const tmp = M[col]; M[col] = M[pivotRow]; M[pivotRow] = tmp; }
+      const pivot = M[col][col];
+      for(let j=0;j<2*n;j++) M[col][j] /= pivot;
+      for(let r=0;r<n;r++){
+        if(r === col) continue;
+        const factor = M[r][col];
+        if(factor === 0) continue;
+        for(let j=0;j<2*n;j++) M[r][j] -= factor * M[col][j];
+      }
+    }
+    return M.map(function(row){ return row.slice(n); });
+  }
+
+  /* Ordinary least squares via the normal equations: beta = (X'X)^-1 X'y.
+     Returns everything needed downstream: fitted values, residuals, the
+     residual standard error (RSE), R^2, and (X'X)^-1 itself — the last one
+     is what lets us compute a proper prediction-interval width later on,
+     rather than just a flat +/- band. */
+  function fitOLS(X, y){
+    const n = X.length, k = X[0].length;
+    if(n <= k) return null;
+    const Xt = transpose(X);
+    const XtXinv = invertMatrix(matMul(Xt, X));
+    if(!XtXinv) return null;
+    const beta = matVec(XtXinv, matVec(Xt, y));
+    const fitted = X.map(function(row){
+      let s = 0;
+      for(let i=0;i<row.length;i++) s += row[i]*beta[i];
+      return s;
+    });
+    const residuals = y.map(function(yi, i){ return yi - fitted[i]; });
+    const sse = residuals.reduce(function(s, e){ return s + e*e; }, 0);
+    const meanY = y.reduce(function(s, v){ return s+v; }, 0) / n;
+    const sst = y.reduce(function(s, v){ return s + (v-meanY)*(v-meanY); }, 0);
+    const dof = Math.max(1, n - k);
+    return {
+      beta: beta, XtXinv: XtXinv, fitted: fitted, residuals: residuals,
+      sse: sse, dof: dof, rse: Math.sqrt(sse/dof), r2: sst > 0 ? 1 - sse/sst : 0,
+      k: k, n: n
+    };
+  }
+
+  /* Map a week index to a calendar date / month-of-year, extrapolating past
+     the embedded history (WEEKS) at 7-day steps for genuinely future weeks. */
+  function weekToDate(weekIdx){
+    if(weekIdx < WEEKS.length) return new Date(WEEKS[weekIdx] + 'T00:00:00');
+    const base = new Date(WEEKS[WEEKS.length-1] + 'T00:00:00');
+    const d = new Date(base);
+    d.setDate(d.getDate() + (weekIdx - (WEEKS.length-1)) * 7);
+    return d;
+  }
+  function monthOfWeek(weekIdx){ return weekToDate(weekIdx).getMonth(); }
+
+  const Z95 = 1.96; // normal-approximation critical value for a 95% interval;
+                     // reasonable once residual degrees of freedom exceed ~30,
+                     // which holds for every selection large enough to fit at all.
+
+  /* Builds a forecast model off a weekly [weekIndex, value] series:
+       1. Fit a plain trend (intercept + week index).
+       2. If there's enough history (>=40 weekly points spanning >=8 distinct
+          months), also fit trend + 11 month-of-year dummy variables and
+          check whether that seasonal grouping meaningfully improves the fit
+          — specifically, whether it cuts the trend-only residual variance
+          (SSE) by at least 10%. That threshold is a judgment call, not a
+          formal significance test: with only two years of history there
+          isn't enough data per calendar month for a rigorous p-value, so we
+          use "meaningfully reduces error" as a practical, explainable stand-in.
+       3. Keep whichever model qualifies. Its residual standard error (RSE)
+          and (X'X)^-1 matrix are what drive the prediction interval below.
+     Returns null when there simply isn't enough data to fit anything. */
+  function buildForecastModel(series){
+    const n = series.length;
+    if(n < 8) return null;
+    const weeks = series.map(function(p){ return p[0]; });
+    const values = series.map(function(p){ return p[1]; });
+
+    function designRow(w, useSeasonal){
+      const row = [1, w];
+      if(useSeasonal){
+        const m = monthOfWeek(w);
+        for(let d=0; d<11; d++) row.push(m === d ? 1 : 0); // December is the baseline month
+      }
+      return row;
+    }
+
+    const trendFit = fitOLS(weeks.map(function(w){ return designRow(w, false); }), values);
+    if(!trendFit) return null;
+
+    let seasonalApplied = false, model = trendFit, varianceExplained = 0;
+    const monthCounts = new Array(12).fill(0);
+    weeks.forEach(function(w){ monthCounts[monthOfWeek(w)]++; });
+    const monthsRepresented = monthCounts.filter(function(c){ return c > 0; }).length;
+
+    if(n >= 40 && monthsRepresented >= 8){
+      const seasonalFit = fitOLS(weeks.map(function(w){ return designRow(w, true); }), values);
+      if(seasonalFit){
+        varianceExplained = trendFit.sse > 0 ? (trendFit.sse - seasonalFit.sse) / trendFit.sse : 0;
+        if(varianceExplained >= 0.10){ seasonalApplied = true; model = seasonalFit; }
+      }
+    }
+
+    let mapeSum = 0, mapeCount = 0;
+    values.forEach(function(v, i){
+      if(v !== 0){ mapeSum += Math.abs(model.residuals[i]/v); mapeCount++; }
+    });
+
+    /* Prediction interval, explained: for a new week w0, the forecast error
+       has two sources — ordinary residual noise (captured by RSE) and
+       uncertainty in the fitted regression coefficients themselves,  which
+       grows the further w0's design vector x0 sits from the training data
+       (the "leverage" term x0'(X'X)^-1 x0). The standard OLS prediction
+       variance combines both:
+           Var(forecast error at x0) = RSE^2 * (1 + x0' (X'X)^-1 x0)
+       so the interval half-width is Z95 * RSE * sqrt(1 + leverage). The
+       "+1" is what makes this a *prediction* interval (uncertain about one
+       future observation) rather than a *confidence* interval for the mean
+       — it's why the band never shrinks to zero even with a perfect trend. */
+    function predict(w){
+      const row = designRow(w, seasonalApplied);
+      let yhat = 0;
+      for(let i=0;i<row.length;i++) yhat += row[i]*model.beta[i];
+      return Math.max(0, yhat);
+    }
+    function predSE(w){
+      const row = designRow(w, seasonalApplied);
+      let leverage = 0;
+      for(let i=0;i<row.length;i++){
+        let s = 0;
+        for(let j=0;j<row.length;j++) s += model.XtXinv[i][j]*row[j];
+        leverage += row[i]*s;
+      }
+      return model.rse * Math.sqrt(1 + leverage);
+    }
+
+    return {
+      n: n, seasonalApplied: seasonalApplied, varianceExplained: varianceExplained,
+      rse: model.rse, r2: model.r2, dof: model.dof,
+      mape: mapeCount > 0 ? (mapeSum/mapeCount)*100 : null,
+      fittedByWeek: (function(){ const m = new Map(); weeks.forEach(function(w,i){ m.set(w, model.fitted[i]); }); return m; })(),
+      predict: predict, predSE: predSE
+    };
+  }
+
+  function generateForecast(model, lastWeek, horizon){
+    const out = [];
+    for(let h=1; h<=horizon; h++){
+      const w = lastWeek + h;
+      const yhat = model.predict(w), se = model.predSE(w);
+      out.push({ week:w, yhat:yhat, lo: Math.max(0, yhat - Z95*se), hi: yhat + Z95*se });
+    }
+    return out;
+  }
+
+  /* Aggregate a 12-week horizon into one headline total + range. Forecast
+     errors across nearby weeks are correlated in reality (they share the
+     same fitted trend/season), so summing independent variances understates
+     the true uncertainty a little — a deliberate, documented simplification
+     for a single headline figure, not a substitute for the week-by-week band. */
+  function forecastSummary(model, lastWeek, horizon){
+    if(!model) return null;
+    let total = 0, varSum = 0;
+    for(let h=1; h<=horizon; h++){
+      const w = lastWeek + h;
+      const yhat = model.predict(w), se = model.predSE(w);
+      total += yhat; varSum += se*se;
+    }
+    const se = Math.sqrt(varSum);
+    return { total: total, lo: Math.max(0, total - Z95*se), hi: total + Z95*se };
   }
 
   function weeklySeries(rows, fieldName, weekStart, weekEnd){
@@ -626,15 +860,12 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
 
     const salesSeries = weeklySeries(rows, 'Sales_Revenue', filt.weekStart, filt.weekEnd);
     const expenseSeries = weeklySeries(rows, 'Total_Expense', filt.weekStart, filt.weekEnd);
-    const salesTrend = linTrend(salesSeries);
-    const expenseTrend = linTrend(expenseSeries);
-    const horizon = 12;
-    const lastWeek = filt.weekEnd;
-    let forecastSales = 0, forecastExpenses = 0;
-    for(let h=1; h<=horizon; h++){
-      forecastSales += Math.max(0, salesTrend.a + salesTrend.b * (lastWeek + h));
-      forecastExpenses += Math.max(0, expenseTrend.a + expenseTrend.b * (lastWeek + h));
-    }
+    const salesModel = buildForecastModel(salesSeries);
+    const expenseModel = buildForecastModel(expenseSeries);
+    const salesFc = forecastSummary(salesModel, filt.weekEnd, 12);
+    const expenseFc = forecastSummary(expenseModel, filt.weekEnd, 12);
+    const forecastSales = salesFc ? salesFc.total : 0;
+    const forecastExpenses = expenseFc ? expenseFc.total : 0;
 
     let hits = 0, weekCount = 0;
     const budgetIdx = F['Sales_Budget'], salesIdx = F['Sales_Revenue'];
@@ -652,6 +883,7 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
 
     return {
       actualSales: actualSales, forecastSales: forecastSales, salesBudget: salesBudget,
+      salesFc: salesFc, expenseFc: expenseFc,
       variancePct: variancePct, probTarget: probTarget, weekCount: weekCount, hits: hits,
       actualExpenses: actualExpenses, expenseBudget: expenseBudget,
       forecastExpenses: forecastExpenses, opProfit: opProfit, rowCount: rows.length
@@ -663,7 +895,9 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     document.getElementById('sub-actualSales').textContent = k.rowCount.toLocaleString() + ' line items';
 
     document.getElementById('val-forecastSales').textContent = fmtCAD0.format(k.forecastSales);
-    document.getElementById('sub-forecastSales').innerHTML = 'Trend projection · not yet model-based';
+    document.getElementById('sub-forecastSales').innerHTML = k.salesFc
+      ? ('95% PI ' + fmtCAD0Compact.format(k.salesFc.lo) + '&ndash;' + fmtCAD0Compact.format(k.salesFc.hi))
+      : 'Not enough weeks to fit a model';
 
     document.getElementById('val-salesBudget').textContent = fmtCAD0.format(k.salesBudget);
     document.getElementById('sub-salesBudget').textContent = 'Planned, same period';
@@ -680,7 +914,9 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     document.getElementById('sub-actualExpenses').textContent = 'vs ' + fmtCAD0.format(k.expenseBudget) + ' budget';
 
     document.getElementById('val-forecastExpenses').textContent = fmtCAD0.format(k.forecastExpenses);
-    document.getElementById('sub-forecastExpenses').innerHTML = 'Trend projection · not yet model-based';
+    document.getElementById('sub-forecastExpenses').innerHTML = k.expenseFc
+      ? ('95% PI ' + fmtCAD0Compact.format(k.expenseFc.lo) + '&ndash;' + fmtCAD0Compact.format(k.expenseFc.hi))
+      : 'Not enough weeks to fit a model';
 
     const profitKind = k.opProfit >= 0 ? 'good' : 'bad';
     document.getElementById('val-opProfit').textContent = fmtCAD0.format(k.opProfit);
@@ -820,6 +1056,199 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
       overviewGrid.appendChild(d);
     });
   }
+
+  /* ---------------- Forecast panel ---------------- */
+  const FORECAST_METRICS = { Sales_Revenue: 'Sales Revenue', Total_Expense: 'Total Expenses' };
+  let forecastMetric = 'Sales_Revenue';
+  const weekLabelFmt = new Intl.DateTimeFormat('en-CA', { month:'short', day:'2-digit' });
+  function weekLabel(weekIdx){ return weekLabelFmt.format(weekToDate(weekIdx)); }
+
+  const forecastStatsEl = document.getElementById('forecast-stats');
+  const forecastCaptionEl = document.getElementById('forecast-caption');
+  const forecastSvg = document.getElementById('forecast-chart');
+  const forecastWrap = document.getElementById('forecast-chart-wrap');
+  const forecastTooltip = document.getElementById('forecast-tooltip');
+
+  function renderForecastStats(model){
+    if(!model){
+      forecastStatsEl.innerHTML = '<div class="ov-card"><div class="l">Not enough weekly observations in this selection to fit a forecast model (need at least 8).</div></div>';
+      return;
+    }
+    const cards = [
+      { n: fmtCAD0Compact.format(model.rse), l:'Residual std. error' },
+      { n: model.mape === null ? '—' : model.mape.toFixed(1) + '%', l:'MAPE (training fit)' },
+      { n: model.r2.toFixed(2), l:'R² (trend' + (model.seasonalApplied ? ' + season' : '') + ')' },
+      { n: model.seasonalApplied ? 'Detected' : 'Not detected', l:'Monthly seasonality' }
+    ];
+    forecastStatsEl.innerHTML = cards.map(function(c){
+      return '<div class="ov-card"><div class="n mono">' + c.n + '</div><div class="l">' + c.l + '</div></div>';
+    }).join('');
+  }
+
+  function renderForecastCaption(model, label, n){
+    if(!model){
+      forecastCaptionEl.textContent = 'Widen the filters or week range — at least 8 weekly observations are needed to fit a forecast model.';
+      return;
+    }
+    let text = label + ' forecast fits an ordinary-least-squares trend over ' + n + ' weekly observations (residual std. error ' + fmtCAD0Compact.format(model.rse) + ').';
+    if(model.seasonalApplied){
+      text += ' A month-of-year seasonal adjustment is applied because it cuts trend-only error by ' + (model.varianceExplained*100).toFixed(0) + '% — above our 10% threshold for treating it as a real pattern rather than noise.';
+    } else {
+      text += ' No month-of-year pattern cleared our threshold for this selection, so the forecast is trend-only.';
+    }
+    text += ' The shaded band is a 95% prediction interval (forecast ± 1.96 × residual std. error × √(1 + leverage)), which widens the further a week sits from the training history.';
+    forecastCaptionEl.textContent = text;
+  }
+
+  const FC_VB_W = 960, FC_VB_H = 300;
+  const FC_PAD = { top:16, right:16, bottom:26, left:56 };
+  const FC_HIST_WINDOW = 26;
+
+  function renderForecastChart(model, series, lastWeek){
+    while(forecastSvg.firstChild) forecastSvg.removeChild(forecastSvg.firstChild);
+    if(!model || series.length === 0) return;
+
+    const histSlice = series.slice(Math.max(0, series.length - FC_HIST_WINDOW));
+    const forecastPts = generateForecast(model, lastWeek, 12);
+    const histCount = histSlice.length, fcCount = forecastPts.length;
+    const n = histCount + fcCount;
+
+    const allValsForScale = histSlice.map(function(p){ return p[1]; })
+      .concat(histSlice.map(function(p){ return model.fittedByWeek.get(p[0]); }).filter(function(v){ return v !== undefined; }))
+      .concat(forecastPts.map(function(p){ return p.hi; }));
+    const maxY = Math.max.apply(null, allValsForScale) * 1.08;
+    const minY = 0;
+    const innerW = FC_VB_W - FC_PAD.left - FC_PAD.right;
+    const innerH = FC_VB_H - FC_PAD.top - FC_PAD.bottom;
+
+    function xAt(i){ return FC_PAD.left + (n<=1 ? innerW/2 : (i/(n-1)) * innerW); }
+    function yAt(v){ return FC_PAD.top + innerH - ((v-minY)/(maxY-minY||1)) * innerH; }
+
+    const ns = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs){
+      const e = document.createElementNS(ns, tag);
+      for(const k in attrs) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+
+    const ticks = 4;
+    for(let t=0;t<=ticks;t++){
+      const v = minY + (maxY-minY) * (t/ticks);
+      const y = yAt(v);
+      forecastSvg.appendChild(el('line', { x1:FC_PAD.left, x2:FC_VB_W-FC_PAD.right, y1:y, y2:y, class:'gridline' }));
+      const label = el('text', { x: FC_PAD.left-8, y: y+3, 'text-anchor':'end', class:'axis' });
+      label.textContent = fmtCAD0Compact.format(v);
+      forecastSvg.appendChild(label);
+    }
+    const xTickEvery = Math.max(1, Math.round(n/8));
+    for(let i=0;i<n;i+=xTickEvery){
+      const w = i < histCount ? histSlice[i][0] : forecastPts[i-histCount].week;
+      const x = xAt(i);
+      const label = el('text', { x:x, y: FC_VB_H-FC_PAD.bottom+16, 'text-anchor':'middle', class:'axis' });
+      label.textContent = weekLabel(w);
+      forecastSvg.appendChild(label);
+    }
+    // divider between history and forecast
+    const splitX = xAt(histCount - 1);
+    forecastSvg.appendChild(el('line', { x1:splitX, x2:splitX, y1:FC_PAD.top, y2:FC_VB_H-FC_PAD.bottom, stroke:'var(--border)', 'stroke-width':1, 'stroke-dasharray':'2 3' }));
+
+    // 95% prediction interval band (forecast region only)
+    let bandD = '';
+    forecastPts.forEach(function(p, i){ const x = xAt(histCount+i), y = yAt(p.hi); bandD += (i===0?'M':'L') + x.toFixed(2) + ',' + y.toFixed(2) + ' '; });
+    for(let i=forecastPts.length-1;i>=0;i--){ const x = xAt(histCount+i), y = yAt(forecastPts[i].lo); bandD += 'L' + x.toFixed(2) + ',' + y.toFixed(2) + ' '; }
+    bandD += 'Z';
+    forecastSvg.appendChild(el('path', { d:bandD, fill:'var(--accent)', 'fill-opacity':'0.16', stroke:'none' }));
+
+    function pathD(points, xIdxOffset, yfn){
+      let d = '';
+      points.forEach(function(v, i){
+        if(v === undefined || v === null) return;
+        const x = xAt(xIdxOffset+i), y = yfn(v);
+        d += (d===''?'M':'L') + x.toFixed(2) + ',' + y.toFixed(2) + ' ';
+      });
+      return d.trim();
+    }
+
+    // Actual (historical only)
+    forecastSvg.appendChild(el('path', {
+      d: pathD(histSlice.map(function(p){ return p[1]; }), 0, yAt),
+      fill:'none', stroke:'var(--accent)', 'stroke-width':2.5, 'stroke-linecap':'round', 'stroke-linejoin':'round'
+    }));
+
+    // Fitted (historical) + forecast (continuation), one continuous dashed line
+    const modelLineValues = histSlice.map(function(p){ return model.fittedByWeek.get(p[0]); }).concat(forecastPts.map(function(p){ return p.yhat; }));
+    forecastSvg.appendChild(el('path', {
+      d: pathD(modelLineValues, 0, yAt),
+      fill:'none', stroke:'var(--line-budget)', 'stroke-width':2, 'stroke-dasharray':'5 4', 'stroke-linecap':'round'
+    }));
+
+    // hover layer
+    const hoverGroup = el('g', { opacity:0 });
+    const hoverLine = el('line', { y1:FC_PAD.top, y2:FC_VB_H-FC_PAD.bottom, stroke:'var(--border)', 'stroke-width':1 });
+    const hoverDotModel = el('circle', { r:4, fill:'var(--line-budget)', stroke:'var(--surface)', 'stroke-width':2 });
+    const hoverDotActual = el('circle', { r:4, fill:'var(--accent)', stroke:'var(--surface)', 'stroke-width':2 });
+    hoverGroup.appendChild(hoverLine); hoverGroup.appendChild(hoverDotModel); hoverGroup.appendChild(hoverDotActual);
+    forecastSvg.appendChild(hoverGroup);
+
+    const hitArea = el('rect', { x:FC_PAD.left, y:FC_PAD.top, width:innerW, height:innerH, fill:'transparent' });
+    forecastSvg.appendChild(hitArea);
+
+    hitArea.addEventListener('mousemove', function(evt){
+      const bbox = forecastSvg.getBoundingClientRect();
+      const relX = ((evt.clientX - bbox.left) / bbox.width) * FC_VB_W;
+      let i = Math.round(((relX - FC_PAD.left) / innerW) * (n-1));
+      i = Math.max(0, Math.min(n-1, i));
+      const x = xAt(i);
+      const isHist = i < histCount;
+      const w = isHist ? histSlice[i][0] : forecastPts[i-histCount].week;
+      const modelVal = isHist ? model.fittedByWeek.get(w) : forecastPts[i-histCount].yhat;
+      hoverLine.setAttribute('x1', x); hoverLine.setAttribute('x2', x);
+      hoverDotModel.setAttribute('cx', x); hoverDotModel.setAttribute('cy', yAt(modelVal));
+      let rows2 = '<div class="tt-row"><span class="tt-label"><span class="tt-dot" style="background:var(--line-budget)"></span>' + (isHist?'Fitted':'Forecast') + '</span><span class="mono">' + fmtCAD0.format(modelVal) + '</span></div>';
+      if(isHist){
+        const actualVal = histSlice[i][1];
+        hoverDotActual.setAttribute('cx', x); hoverDotActual.setAttribute('cy', yAt(actualVal));
+        hoverDotActual.setAttribute('opacity', 1);
+        rows2 = '<div class="tt-row"><span class="tt-label"><span class="tt-dot" style="background:var(--accent)"></span>Actual</span><span class="mono">' + fmtCAD0.format(actualVal) + '</span></div>' + rows2;
+      } else {
+        hoverDotActual.setAttribute('opacity', 0);
+        const p = forecastPts[i-histCount];
+        rows2 += '<div class="tt-row"><span class="tt-label">95% PI</span><span class="mono">' + fmtCAD0Compact.format(p.lo) + '–' + fmtCAD0Compact.format(p.hi) + '</span></div>';
+      }
+      hoverGroup.setAttribute('opacity', 1);
+      forecastTooltip.innerHTML = '<div class="tt-date">' + weekLabel(w) + (isHist ? '' : ' (forecast)') + '</div>' + rows2;
+      const wrapBox = forecastWrap.getBoundingClientRect();
+      const xPix = (x/FC_VB_W) * wrapBox.width;
+      let left = xPix + 14;
+      if(left + 180 > wrapBox.width) left = xPix - 180;
+      forecastTooltip.style.left = left + 'px';
+      forecastTooltip.style.top = '8px';
+      forecastTooltip.style.opacity = 1;
+    });
+    hitArea.addEventListener('mouseleave', function(){
+      hoverGroup.setAttribute('opacity', 0);
+      forecastTooltip.style.opacity = 0;
+    });
+  }
+
+  function renderForecastPanel(rows, filt){
+    const label = FORECAST_METRICS[forecastMetric];
+    const series = weeklySeries(rows, forecastMetric, filt.weekStart, filt.weekEnd);
+    const model = buildForecastModel(series);
+    renderForecastStats(model);
+    renderForecastCaption(model, label, series.length);
+    renderForecastChart(model, series, filt.weekEnd);
+  }
+
+  document.getElementById('forecast-metric-toggle').addEventListener('click', function(evt){
+    const btn = evt.target.closest('.toggle-btn');
+    if(!btn) return;
+    forecastMetric = btn.dataset.metric;
+    Array.from(document.querySelectorAll('#forecast-metric-toggle .toggle-btn')).forEach(function(b){
+      b.classList.toggle('active', b === btn);
+    });
+    renderForecastPanel(lastRows, lastFilt);
+  });
 
   /* ---------------- Diagnostic analysis: correlation heatmap ---------------- */
   const CORR_VARS = [
@@ -1019,12 +1448,15 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
   document.getElementById('meta-rows').textContent = ROWS.length.toLocaleString() + ' rows · ' + STORES.length + ' stores';
 
   /* ---------------- Wire up + recalc ---------------- */
+  let lastRows = [], lastFilt = null;
   function recalc(){
     const filt = getFilters();
     const rows = filteredRows(filt);
+    lastRows = rows; lastFilt = filt;
     renderKPIs(computeKPIs(filt));
     renderChart(rows, filt);
     renderOverview(filt, rows);
+    renderForecastPanel(rows, filt);
     renderDiagnostics(rows);
   }
 
