@@ -211,6 +211,12 @@
     color:var(--accent-strong); background:var(--accent-soft); border-radius:5px; padding:1px 6px;
   }
 
+  .color-key{
+    font-size:12px; color:var(--text-muted); margin:-12px 0 28px; display:flex; align-items:center;
+    gap:6px; flex-wrap:wrap;
+  }
+  .color-key .pill{ font-size:11px; }
+
   /* ---------- Panels / charts ---------- */
   .panel{
     background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-l);
@@ -263,6 +269,19 @@
   }
   .tab-btn.active{ color:var(--accent-strong); border-bottom-color:var(--accent); }
   .tab-btn:hover:not(.active){ color:var(--text-primary); }
+
+  /* ---------- Model information ---------- */
+  .model-info-grid{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media (max-width:820px){ .model-info-grid{ grid-template-columns:1fr; } }
+  .model-info-card{
+    border:1px solid var(--border); border-radius:var(--radius-m); padding:16px 18px;
+    background:var(--surface-2);
+  }
+  .model-info-card h4{ margin:0 0 2px; font-size:14px; font-weight:700; }
+  .model-info-card .mi-sub{ margin:0 0 10px; font-size:11.5px; color:var(--text-muted); }
+  .model-info-card p{ margin:0 0 10px; font-size:12.5px; line-height:1.55; color:var(--text-secondary); }
+  .model-info-card p:last-child{ margin-bottom:0; }
+  .model-info-card p b{ color:var(--text-primary); }
 
   /* ---------- Model validation ---------- */
   .val-metrics-wrap{ overflow-x:auto; }
@@ -415,7 +434,7 @@
   <div>
     <p class="brand-eyebrow">Northbound Retail Group &middot; Management Analytics</p>
     <h1>Retail Performance Cockpit</h1>
-    <p class="subtitle">Weekly sales &amp; expense performance across the Canadian store network — actuals, budget variance, and preliminary trend forecasts.</p>
+    <p class="subtitle">Weekly sales &amp; expense performance across the Canadian store network — actuals, budget variance, regression-based forecasting, and what-if scenario analysis.</p>
   </div>
   <div class="header-meta">
     <span class="badge"><span class="dot"></span><span id="meta-span">—</span></span>
@@ -472,6 +491,7 @@
   <span class="hint">Reflects current filter selection · figures in CAD</span>
 </div>
 <div class="kpi-grid" id="kpi-grid"></div>
+<p class="color-key">Reading the colors on this dashboard: <span class="pill good">green</span> at or above target &middot; <span class="pill warn">amber</span> a modest shortfall &middot; <span class="pill bad">red</span> a notable shortfall. Applies to every variance, probability and scenario indicator below.</p>
 
 <div class="panel">
   <div class="section-head">
@@ -666,6 +686,32 @@
       <span class="hint">Out-of-sample holdout test</span>
     </div>
     <p class="heatmap-caption">Trained on weeks 1&ndash;80, evaluated on the held-out weeks 81&ndash;104 &mdash; a genuine out-of-sample test, not just a fit to history. This split always uses the full week history and is independent of the week-range filter above (region, store and category filters still apply).</p>
+  </div>
+
+  <div class="panel">
+    <div class="section-head">
+      <h2>Model Information</h2>
+      <span class="hint">What&rsquo;s in each model, why, and where it can be wrong</span>
+    </div>
+    <div class="model-info-grid">
+      <div class="model-info-card">
+        <h4>Sales Driver Regression</h4>
+        <p class="mi-sub">Powers the What-If Simulator &amp; Performance Dashboard</p>
+        <p><b>Variables:</b> Foot traffic, marketing spend, discount rate, conversion rate, average transaction value, inventory availability, competitor price index, consumer confidence index.</p>
+        <p><b>Why these:</b> they're the demand-side levers store managers actually control (traffic generation, pricing, promotion, staffing/inventory readiness) plus the two external conditions most likely to move sales independent of any store action (a competitor's pricing, the broader consumer mood). They match the drivers named in the original dashboard brief.</p>
+        <p><b>What R&sup2; means here:</b> <span id="mi-sales-r2-sentence">&mdash;</span></p>
+        <p><b>Limitations:</b> the coefficients describe association, not proven cause and effect; the model is linear, so it assumes each driver's effect is constant and doesn't capture diminishing returns past the range actually observed in the data, or interaction between drivers (e.g., marketing may work differently at deep discount levels than at none); it also doesn't know about anything not in the dataset &mdash; a competitor store opening nearby, a supply disruption, a regional economic shock.</p>
+      </div>
+      <div class="model-info-card">
+        <h4>Sales &amp; Expense Forecast (trend + seasonal)</h4>
+        <p class="mi-sub">Powers the Forecast, Probability &amp; Executive Summary panels</p>
+        <p><b>Variables:</b> week index (the time trend) and, where it materially improves the fit, a month-of-year seasonal adjustment. Deliberately <em>not</em> the 8 business drivers above &mdash; this model's job is projecting the aggregate weekly total forward in time, not attributing it to a cause.</p>
+        <p><b>Why these:</b> a 12-week-ahead forecast needs a model that only uses information actually available at forecast time (the calendar), not next quarter's foot traffic or marketing spend, which aren't known yet.</p>
+        <p><b>What R&sup2; means here:</b> <span id="mi-forecast-r2-sentence">&mdash;</span></p>
+        <p><b>Limitations:</b> it assumes the trend and seasonal pattern that held over the observed history continue unchanged; with two years of data, each calendar month has only been seen twice, so the seasonal estimate is a reasonable signal, not a precise one; it cannot anticipate a planned initiative, a new store opening, or a genuine market shock &mdash; it only extrapolates the past.</p>
+      </div>
+    </div>
+    <p class="heatmap-caption" style="margin-top:14px;"><b>Across every model on this dashboard:</b> predictions assume current market conditions, pricing strategy and operating practices persist through the forecast horizon; all of it is fit on this one retail network's Jan 2024&ndash;Dec 2025 history and may not generalize to a new store, a new category, or a genuinely different economic environment; and accuracy is not uniform &mdash; see the category breakdown below for where it's weaker.</p>
   </div>
 
   <div class="panel">
@@ -1830,10 +1876,17 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
       const scenario = computeScenario();
       const n = whatifModel.n;
       const scenarioSpend = val * n, baselineSpend = mean * n;
-      const efficiency = scenarioSpend > 0 ? scenario.scenarioTotal / scenarioSpend : 0;
       const baselineEfficiency = baselineSpend > 0 ? scenario.baselineTotal / baselineSpend : 0;
-      document.getElementById('wf-efficiency-' + d.key).textContent =
-        'Efficiency: $' + efficiency.toFixed(2) + ' sales per $1 spent (baseline $' + baselineEfficiency.toFixed(2) + ')';
+      const effEl = document.getElementById('wf-efficiency-' + d.key);
+      if(scenarioSpend <= 0){
+        // division by zero would be mathematically undefined here (there's
+        // still sales, just none of it attributable to a marketing dollar) —
+        // say so plainly instead of printing a misleading "$0.00"
+        effEl.textContent = 'Efficiency: n/a with $0 spend (baseline $' + baselineEfficiency.toFixed(2) + ' sales per $1 spent)';
+      } else {
+        const efficiency = scenario.scenarioTotal / scenarioSpend;
+        effEl.textContent = 'Efficiency: $' + efficiency.toFixed(2) + ' sales per $1 spent (baseline $' + baselineEfficiency.toFixed(2) + ')';
+      }
     }
   }
 
@@ -1845,8 +1898,14 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
       const spread = whatifModel.maxs[i] - whatifModel.mins[i];
       const margin = spread > 0 ? spread * 0.25 : (Math.abs(mean) * 0.25 || 1);
       let min = whatifModel.mins[i] - margin;
-      const max = whatifModel.maxs[i] + margin;
+      let max = whatifModel.maxs[i] + margin;
       if(d.key !== 'Competitor_Price_Index' && d.key !== 'Consumer_Confidence_Index') min = Math.max(0, min);
+      if(d.key === 'Marketing_Spend'){
+        // widened deliberately so the slider itself can reach a full pause
+        // (0) or a +500% surge, not just the range seen historically
+        min = 0;
+        max = Math.max(max, mean * 6);
+      }
       let val;
       if(whatifValues[d.key] == null){
         val = mean; // untouched — track the current selection's baseline
@@ -2032,6 +2091,13 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     const gap = test.r2 - train.r2;
     const gapWord = gap < -0.1 ? 'a meaningful drop — some overfitting to the training weeks' : (gap < -0.03 ? 'a modest drop, within what’s normal for a holdout test' : 'holding up well out of sample');
     valMetricsCaptionEl.textContent = 'R² goes from ' + train.r2.toFixed(2) + ' on training weeks to ' + test.r2.toFixed(2) + ' on the held-out weeks: ' + gapWord + '.';
+
+    const miSalesEl = document.getElementById('mi-sales-r2-sentence');
+    if(miSalesEl){
+      miSalesEl.textContent = 'R² = ' + train.r2.toFixed(2) + ' means the model explains ' + Math.round(train.r2*100) +
+        '% of the week-to-week variation in sales revenue across stores and categories (' + Math.round(test.r2*100) +
+        '% on weeks it never saw during training); the rest is week-specific noise this model doesn’t capture — a local event, weather, a one-off promotion.';
+    }
   }
 
   const VAL_VB_W = 960, VAL_VB_H = 300;
@@ -2155,6 +2221,7 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
   function renderTrendValidation(rows){
     const trendTargets = [ { key:'Sales_Revenue', label:'Sales Revenue' }, { key:'Total_Expense', label:'Total Expenses' } ];
     let html = '<tr><th>Series</th><th>Train R²</th><th>Test R²</th><th>Train MAPE</th><th>Test MAPE</th></tr>';
+    let firstResult = null;
     trendTargets.forEach(function(t){
       const fullSeries = weeklySeries(rows, t.key, 0, WEEKS.length-1);
       const trainSeries = fullSeries.filter(function(p){ return p[0] < VAL_SPLIT_WEEK; });
@@ -2167,6 +2234,7 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
       const testActual = testSeries.map(function(p){ return p[1]; });
       const testPred = testSeries.map(function(p){ return model.predict(p[0]); });
       const testM = rowMetrics(testActual, testPred);
+      if(!firstResult) firstResult = { label:t.label, trainR2:model.r2, testR2:testM.r2, seasonal:model.seasonalApplied };
       html += '<tr><td class="metric-name">' + t.label + '</td>' +
         '<td class="mono-cell">' + model.r2.toFixed(3) + '</td>' +
         '<td class="mono-cell">' + testM.r2.toFixed(3) + '</td>' +
@@ -2174,6 +2242,13 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
         '<td class="mono-cell">' + (testM.mape==null?'—':testM.mape.toFixed(1)+'%') + '</td></tr>';
     });
     valTrendTableEl.innerHTML = html;
+
+    const miForecastEl = document.getElementById('mi-forecast-r2-sentence');
+    if(miForecastEl && firstResult){
+      miForecastEl.textContent = 'For ' + firstResult.label + ', R² = ' + firstResult.trainR2.toFixed(2) + ' means the trend' + (firstResult.seasonal ? ' + seasonal pattern' : '') +
+        ' explains ' + Math.round(firstResult.trainR2*100) + '% of week-to-week variation in the training weeks (' + Math.round(firstResult.testR2*100) +
+        '% on the held-out weeks); the remainder is short-term fluctuation no calendar-based model can anticipate.';
+    }
   }
 
   function renderValidationTab(filt){
