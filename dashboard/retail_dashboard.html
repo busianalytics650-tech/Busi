@@ -255,6 +255,28 @@
   @media (max-width:900px){ .forecast-stats{ grid-template-columns:repeat(2,1fr); } }
   @media (max-width:520px){ .forecast-stats{ grid-template-columns:1fr; } }
 
+  /* ---------- Tabs ---------- */
+  .tab-bar{ display:flex; gap:24px; margin-bottom:22px; border-bottom:1px solid var(--border); }
+  .tab-btn{
+    font-family:inherit; font-size:13.5px; font-weight:700; padding:10px 2px 12px; margin-bottom:-1px;
+    border:none; background:none; color:var(--text-muted); cursor:pointer; border-bottom:2px solid transparent;
+  }
+  .tab-btn.active{ color:var(--accent-strong); border-bottom-color:var(--accent); }
+  .tab-btn:hover:not(.active){ color:var(--text-primary); }
+
+  /* ---------- Model validation ---------- */
+  .val-metrics-wrap{ overflow-x:auto; }
+  table.val-metrics{ width:100%; border-collapse:collapse; font-size:13px; min-width:420px; }
+  table.val-metrics th, table.val-metrics td{ text-align:left; padding:9px 12px; border-bottom:1px solid var(--border); }
+  table.val-metrics th{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); font-weight:700; }
+  table.val-metrics td.metric-name{ font-weight:600; }
+  table.val-metrics td.mono-cell{ font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; }
+  table.val-metrics tr:last-child td{ border-bottom:none; }
+  .val-flag{
+    display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:700;
+    padding:2px 7px; border-radius:5px; background:var(--warning-soft); color:var(--warning); margin-left:8px;
+  }
+
   /* ---------- Probability analysis ---------- */
   .prob-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:20px; margin-bottom:14px; }
   @media (max-width:820px){ .prob-grid{ grid-template-columns:1fr; } }
@@ -403,6 +425,12 @@
   <button class="btn reset" id="f-reset" type="button">Reset filters</button>
 </div>
 
+<div class="tab-bar" id="tab-bar">
+  <button type="button" class="tab-btn active" data-tab="dashboard">Dashboard</button>
+  <button type="button" class="tab-btn" data-tab="validation">Model Validation</button>
+</div>
+
+<div id="tab-dashboard">
 <div class="section-head">
   <h2>Executive KPI Summary</h2>
   <span class="hint">Reflects current filter selection · figures in CAD</span>
@@ -540,12 +568,75 @@
 <div class="panel">
   <div class="section-head">
     <h2>Build Roadmap</h2>
-    <span class="hint">Iteration 5 adds the probability analysis — remaining below</span>
+    <span class="hint">Iteration 6 adds the Model Validation tab — remaining below</span>
   </div>
   <div class="roadmap">
-    <div class="rm-item"><span class="num">06</span>Matching multivariate regression &amp; what-if controls for Total Expenses (COGS rate, labour, shipping, returns)</div>
-    <div class="rm-item"><span class="num">07</span>Region-level segmentation &amp; top/bottom performer rankings</div>
-    <div class="rm-item"><span class="num">08</span>Model validation panel for the driver regressions — RMSE, coefficient significance</div>
+    <div class="rm-item"><span class="num">07</span>Matching multivariate regression &amp; what-if controls for Total Expenses (COGS rate, labour, shipping, returns)</div>
+    <div class="rm-item"><span class="num">08</span>Region-level segmentation &amp; top/bottom performer rankings</div>
+  </div>
+</div>
+</div>
+
+<div id="tab-validation" hidden>
+  <div class="panel">
+    <div class="section-head">
+      <h2>Model Validation</h2>
+      <span class="hint">Out-of-sample holdout test</span>
+    </div>
+    <p class="heatmap-caption">Trained on weeks 1&ndash;80, evaluated on the held-out weeks 81&ndash;104 &mdash; a genuine out-of-sample test, not just a fit to history. This split always uses the full week history and is independent of the week-range filter above (region, store and category filters still apply).</p>
+  </div>
+
+  <div class="panel">
+    <div class="section-head">
+      <h2>Sales Driver Regression &mdash; Train vs. Test</h2>
+      <span class="hint">Same 8-driver model that powers the What-If Simulator</span>
+    </div>
+    <div class="val-metrics-wrap">
+      <table class="val-metrics" id="val-metrics-table"></table>
+    </div>
+    <p class="heatmap-caption" id="val-metrics-caption"></p>
+  </div>
+
+  <div class="panel">
+    <div class="section-head">
+      <h2>Actual vs. Predicted &mdash; Test Period</h2>
+      <span class="hint">Weeks 81&ndash;104, weekly totals</span>
+    </div>
+    <div class="legend">
+      <span class="legend-item"><span class="legend-swatch" style="background:var(--accent)"></span>Actual</span>
+      <span class="legend-item"><span class="legend-swatch" style="background:var(--line-budget); background-image:repeating-linear-gradient(90deg,var(--line-budget) 0 4px,transparent 4px 7px);"></span>Predicted (test)</span>
+    </div>
+    <div class="chart-wrap" id="val-chart-wrap">
+      <svg class="chart" id="val-chart" viewBox="0 0 960 300" preserveAspectRatio="none"></svg>
+      <div class="chart-tooltip" id="val-tooltip"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head">
+      <h2>Accuracy by Category</h2>
+      <span class="hint">Test-period MAPE &middot; flagged where notably weaker than the overall figure</span>
+    </div>
+    <div id="val-category-accuracy"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head">
+      <h2>Which Drivers Matter Most</h2>
+      <span class="hint">Standardized coefficients &middot; comparable across drivers regardless of units</span>
+    </div>
+    <p class="heatmap-caption">Raw coefficients aren&rsquo;t directly comparable &mdash; "$2,451 per 100 visits" and "$22 per $100 spent" are different units. Each bar instead shows the coefficient standardized by that driver&rsquo;s own variability (coefficient &times; driver std. dev. &divide; sales std. dev., all from the training set): the predicted change in sales, in standard-deviation units, for a 1-standard-deviation move in that driver, holding the others fixed.</p>
+    <div id="val-importance"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head">
+      <h2>Forecast Trend Models &mdash; Train vs. Test</h2>
+      <span class="hint">The weekly trend/seasonal models behind the Forecast &amp; Probability panels</span>
+    </div>
+    <div class="val-metrics-wrap">
+      <table class="val-metrics" id="val-trend-metrics-table"></table>
+    </div>
   </div>
 </div>
 
@@ -1663,6 +1754,268 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     renderScenarioResults();
   });
 
+  /* =================================================================
+     Model Validation: a genuine holdout test. Weeks 1-80 (index 0-79)
+     train the models; weeks 81-104 (index 80-103) are held out and never
+     seen during fitting, so their error tells us how the model performs
+     on data it wasn't shaped to fit. This split always spans the full
+     week history — deliberately independent of the week-range filter,
+     which would otherwise let someone accidentally "test" on data the
+     model was also trained on.
+     ================================================================= */
+  const VAL_SPLIT_WEEK = 80; // 0-indexed: weeks 0-79 train, 80-103 test
+
+  function filteredRowsForValidation(filt){
+    const out = [];
+    for(let i=0;i<ROWS.length;i++){
+      const row = ROWS[i], stIdx = row[1], catIdx = row[2];
+      if(filt.store !== 'all' && stIdx !== parseInt(filt.store,10)) continue;
+      if(filt.store === 'all' && filt.region !== 'all' && STORES[stIdx].region !== filt.region) continue;
+      if(filt.category !== 'all' && CATEGORIES[catIdx] !== filt.category) continue;
+      out.push(row);
+    }
+    return out;
+  }
+
+  function predictRowVector(beta, row){
+    let s = beta[0];
+    WHATIF_DRIVERS.forEach(function(d, i){ s += beta[i+1] * row[F[d.key]]; });
+    return s;
+  }
+
+  /* R², RMSE and MAPE from a set of actual/predicted pairs — used for both
+     the train and the test side so the two numbers are directly comparable. */
+  function rowMetrics(actual, predicted){
+    const n = actual.length;
+    if(n === 0) return null;
+    const meanY = actual.reduce(function(s,v){ return s+v; }, 0) / n;
+    let sse = 0, sst = 0, apeSum = 0, apeCount = 0;
+    for(let i=0;i<n;i++){
+      const resid = actual[i] - predicted[i];
+      sse += resid*resid;
+      sst += (actual[i]-meanY)*(actual[i]-meanY);
+      if(actual[i] !== 0){ apeSum += Math.abs(resid/actual[i]); apeCount++; }
+    }
+    return {
+      n:n, r2: sst > 0 ? 1 - sse/sst : 0, rmse: Math.sqrt(sse/n),
+      mape: apeCount > 0 ? (apeSum/apeCount)*100 : null
+    };
+  }
+
+  function stdDev(arr){
+    const n = arr.length;
+    const m = arr.reduce(function(s,v){ return s+v; }, 0)/n;
+    return Math.sqrt(arr.reduce(function(s,v){ return s+(v-m)*(v-m); }, 0)/n);
+  }
+
+  const valMetricsTableEl = document.getElementById('val-metrics-table');
+  const valMetricsCaptionEl = document.getElementById('val-metrics-caption');
+  const valCategoryEl = document.getElementById('val-category-accuracy');
+  const valImportanceEl = document.getElementById('val-importance');
+  const valTrendTableEl = document.getElementById('val-trend-metrics-table');
+
+  function metricsRowHtml(label, fmt, trainVal, testVal){
+    return '<tr><td class="metric-name">' + label + '</td>' +
+      '<td class="mono-cell">' + (trainVal==null ? '—' : fmt(trainVal)) + '</td>' +
+      '<td class="mono-cell">' + (testVal==null ? '—' : fmt(testVal)) + '</td></tr>';
+  }
+
+  function insufficientValidationData(){
+    valMetricsTableEl.innerHTML = '';
+    valMetricsCaptionEl.textContent = 'Not enough rows in this selection (need more than ' + (WHATIF_DRIVERS.length+1) + ' per split) to run the holdout test — try widening the region/store/category filters.';
+    valCategoryEl.innerHTML = '';
+    valImportanceEl.innerHTML = '';
+    valTrendTableEl.innerHTML = '';
+    while(valSvg.firstChild) valSvg.removeChild(valSvg.firstChild);
+  }
+
+  function renderValidationMetrics(train, test){
+    valMetricsTableEl.innerHTML =
+      '<tr><th>Metric</th><th>Train (wks 1&ndash;80, n=' + train.n.toLocaleString() + ')</th><th>Test (wks 81&ndash;104, n=' + test.n.toLocaleString() + ')</th></tr>' +
+      metricsRowHtml('R²', function(v){ return v.toFixed(3); }, train.r2, test.r2) +
+      metricsRowHtml('RMSE', function(v){ return fmtCAD0.format(v); }, train.rmse, test.rmse) +
+      metricsRowHtml('MAPE', function(v){ return v.toFixed(1) + '%'; }, train.mape, test.mape);
+    const gap = test.r2 - train.r2;
+    const gapWord = gap < -0.1 ? 'a meaningful drop — some overfitting to the training weeks' : (gap < -0.03 ? 'a modest drop, within what’s normal for a holdout test' : 'holding up well out of sample');
+    valMetricsCaptionEl.textContent = 'R² goes from ' + train.r2.toFixed(2) + ' on training weeks to ' + test.r2.toFixed(2) + ' on the held-out weeks: ' + gapWord + '.';
+  }
+
+  const VAL_VB_W = 960, VAL_VB_H = 300;
+  const VAL_PAD = { top:16, right:16, bottom:26, left:56 };
+  const valSvg = document.getElementById('val-chart');
+  const valChartWrap = document.getElementById('val-chart-wrap');
+  const valTooltip = document.getElementById('val-tooltip');
+
+  function renderValidationChart(testWeeks, actualByWeek, predictedByWeek){
+    while(valSvg.firstChild) valSvg.removeChild(valSvg.firstChild);
+    const n = testWeeks.length;
+    if(n === 0) return;
+    const actualVals = testWeeks.map(function(w){ return actualByWeek.get(w) || 0; });
+    const predVals = testWeeks.map(function(w){ return predictedByWeek.get(w) || 0; });
+    const maxY = Math.max.apply(null, actualVals.concat(predVals)) * 1.08;
+    const innerW = VAL_VB_W - VAL_PAD.left - VAL_PAD.right, innerH = VAL_VB_H - VAL_PAD.top - VAL_PAD.bottom;
+    function xAt(i){ return VAL_PAD.left + (n<=1 ? innerW/2 : (i/(n-1))*innerW); }
+    function yAt(v){ return VAL_PAD.top + innerH - (v/(maxY||1))*innerH; }
+    const ns = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs){ const e = document.createElementNS(ns, tag); for(const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+
+    for(let t=0;t<=4;t++){
+      const v = maxY*(t/4), y = yAt(v);
+      valSvg.appendChild(el('line', { x1:VAL_PAD.left, x2:VAL_VB_W-VAL_PAD.right, y1:y, y2:y, class:'gridline' }));
+      const lab = el('text', { x:VAL_PAD.left-8, y:y+3, 'text-anchor':'end', class:'axis' });
+      lab.textContent = fmtCAD0Compact.format(v);
+      valSvg.appendChild(lab);
+    }
+    const xTickEvery = Math.max(1, Math.round(n/8));
+    for(let i=0;i<n;i+=xTickEvery){
+      const lab = el('text', { x:xAt(i), y:VAL_VB_H-VAL_PAD.bottom+16, 'text-anchor':'middle', class:'axis' });
+      lab.textContent = weekLabel(testWeeks[i]);
+      valSvg.appendChild(lab);
+    }
+    function pathD(vals){
+      let d = '';
+      vals.forEach(function(v,i){ const x=xAt(i), y=yAt(v); d += (i===0?'M':'L')+x.toFixed(2)+','+y.toFixed(2)+' '; });
+      return d.trim();
+    }
+    valSvg.appendChild(el('path', { d:pathD(predVals), fill:'none', stroke:'var(--line-budget)', 'stroke-width':2, 'stroke-dasharray':'5 4', 'stroke-linecap':'round' }));
+    valSvg.appendChild(el('path', { d:pathD(actualVals), fill:'none', stroke:'var(--accent)', 'stroke-width':2.5, 'stroke-linecap':'round', 'stroke-linejoin':'round' }));
+
+    const hoverGroup = el('g', { opacity:0 });
+    const hoverLine = el('line', { y1:VAL_PAD.top, y2:VAL_VB_H-VAL_PAD.bottom, stroke:'var(--border)', 'stroke-width':1 });
+    const dotA = el('circle', { r:4, fill:'var(--accent)', stroke:'var(--surface)', 'stroke-width':2 });
+    const dotP = el('circle', { r:4, fill:'var(--line-budget)', stroke:'var(--surface)', 'stroke-width':2 });
+    hoverGroup.appendChild(hoverLine); hoverGroup.appendChild(dotP); hoverGroup.appendChild(dotA);
+    valSvg.appendChild(hoverGroup);
+    const hitArea = el('rect', { x:VAL_PAD.left, y:VAL_PAD.top, width:innerW, height:innerH, fill:'transparent' });
+    valSvg.appendChild(hitArea);
+    hitArea.addEventListener('mousemove', function(evt){
+      const bbox = valSvg.getBoundingClientRect();
+      const relX = ((evt.clientX-bbox.left)/bbox.width)*VAL_VB_W;
+      let i = Math.round(((relX-VAL_PAD.left)/innerW)*(n-1));
+      i = Math.max(0, Math.min(n-1,i));
+      const x = xAt(i);
+      hoverLine.setAttribute('x1',x); hoverLine.setAttribute('x2',x);
+      dotA.setAttribute('cx',x); dotA.setAttribute('cy',yAt(actualVals[i]));
+      dotP.setAttribute('cx',x); dotP.setAttribute('cy',yAt(predVals[i]));
+      hoverGroup.setAttribute('opacity',1);
+      valTooltip.innerHTML = '<div class="tt-date">' + weekLabel(testWeeks[i]) + '</div>' +
+        '<div class="tt-row"><span class="tt-label"><span class="tt-dot" style="background:var(--accent)"></span>Actual</span><span class="mono">' + fmtCAD0.format(actualVals[i]) + '</span></div>' +
+        '<div class="tt-row"><span class="tt-label"><span class="tt-dot" style="background:var(--line-budget)"></span>Predicted</span><span class="mono">' + fmtCAD0.format(predVals[i]) + '</span></div>';
+      const wrapBox = valChartWrap.getBoundingClientRect();
+      const xPix = (x/VAL_VB_W)*wrapBox.width;
+      let left = xPix+14; if(left+170>wrapBox.width) left = xPix-170;
+      valTooltip.style.left = left+'px'; valTooltip.style.top='8px'; valTooltip.style.opacity=1;
+    });
+    hitArea.addEventListener('mouseleave', function(){ hoverGroup.setAttribute('opacity',0); valTooltip.style.opacity=0; });
+  }
+
+  function renderCategoryAccuracy(testRows, beta, overallMape){
+    const byCat = new Map();
+    testRows.forEach(function(r){
+      const c = r[2];
+      if(!byCat.has(c)) byCat.set(c, { actual:[], predicted:[] });
+      const bucket = byCat.get(c);
+      bucket.actual.push(r[F['Sales_Revenue']]);
+      bucket.predicted.push(predictRowVector(beta, r));
+    });
+    const rows = CATEGORIES.map(function(name, idx){
+      const bucket = byCat.get(idx);
+      if(!bucket) return null;
+      const m = rowMetrics(bucket.actual, bucket.predicted);
+      return { name:name, mape:m.mape, r2:m.r2, n:m.n };
+    }).filter(function(r){ return r; });
+    rows.sort(function(a,b){ return (b.mape||0)-(a.mape||0); });
+    const flagThreshold = overallMape * 1.25;
+    valCategoryEl.innerHTML = rows.map(function(r){
+      const weak = r.mape != null && r.mape > flagThreshold;
+      const kind = weak ? 'bad' : (r.mape != null && r.mape > overallMape ? 'warn' : 'good');
+      return '<div class="var-row"><div class="var-row-top"><span class="var-row-name">' + r.name + ' <span>n=' + r.n + '</span></span>' +
+        '<span>' + pillHtml((r.mape==null?'—':r.mape.toFixed(1)+'% MAPE'), kind) + (weak ? '<span class="val-flag">NEEDS ATTENTION</span>' : '') + '</span></div>' +
+        '<div class="var-row-bottom"><div class="var-track"><div class="center-line"></div><div class="bar" style="left:50%; width:' + Math.min(50, (r.mape||0)/(flagThreshold*1.4||1)*50) + '%; background:var(' + (weak?'--critical':(kind==='warn'?'--warning':'--good')) + ');"></div></div></div></div>';
+    }).join('');
+  }
+
+  function renderImportance(fit, trainRows){
+    const yVals = trainRows.map(function(r){ return r[F['Sales_Revenue']]; });
+    const stdY = stdDev(yVals);
+    const items = WHATIF_DRIVERS.map(function(d, i){
+      const xVals = trainRows.map(function(r){ return r[F[d.key]]; });
+      const stdX = stdDev(xVals);
+      const raw = fit.beta[i+1];
+      const standardized = stdY > 0 ? raw * stdX / stdY : 0;
+      return { label:d.label, raw:raw, standardized:standardized };
+    });
+    items.sort(function(a,b){ return Math.abs(b.standardized)-Math.abs(a.standardized); });
+    const maxAbs = Math.max(0.01, Math.max.apply(null, items.map(function(it){ return Math.abs(it.standardized); })));
+    valImportanceEl.innerHTML = items.map(function(it){
+      const half = Math.min(50, (Math.abs(it.standardized)/maxAbs)*50);
+      const colorVar = it.standardized >= 0 ? '--good' : '--critical';
+      const barStyle = (it.standardized>=0 ? 'left:50%;' : ('left:'+(50-half)+'%;')) + 'width:'+half+'%; background:var('+colorVar+');';
+      return '<div class="var-row"><div class="var-row-top"><span class="var-row-name">' + it.label + '</span>' +
+        '<span class="pill ' + (it.standardized>=0?'good':'bad') + '">' + (it.standardized>=0?'+':'') + it.standardized.toFixed(2) + 'σ</span></div>' +
+        '<div class="var-row-bottom"><div class="var-track"><div class="center-line"></div><div class="bar" style="'+barStyle+'"></div></div>' +
+        '<span class="var-detail">raw ' + (it.raw>=0?'+':'') + fmtCAD0.format(it.raw) + '</span></div></div>';
+    }).join('');
+  }
+
+  function renderTrendValidation(rows){
+    const trendTargets = [ { key:'Sales_Revenue', label:'Sales Revenue' }, { key:'Total_Expense', label:'Total Expenses' } ];
+    let html = '<tr><th>Series</th><th>Train R²</th><th>Test R²</th><th>Train MAPE</th><th>Test MAPE</th></tr>';
+    trendTargets.forEach(function(t){
+      const fullSeries = weeklySeries(rows, t.key, 0, WEEKS.length-1);
+      const trainSeries = fullSeries.filter(function(p){ return p[0] < VAL_SPLIT_WEEK; });
+      const testSeries = fullSeries.filter(function(p){ return p[0] >= VAL_SPLIT_WEEK; });
+      const model = buildForecastModel(trainSeries);
+      if(!model){
+        html += '<tr><td class="metric-name">' + t.label + '</td><td colspan="4" class="mono-cell">Not enough training weeks</td></tr>';
+        return;
+      }
+      const testActual = testSeries.map(function(p){ return p[1]; });
+      const testPred = testSeries.map(function(p){ return model.predict(p[0]); });
+      const testM = rowMetrics(testActual, testPred);
+      html += '<tr><td class="metric-name">' + t.label + '</td>' +
+        '<td class="mono-cell">' + model.r2.toFixed(3) + '</td>' +
+        '<td class="mono-cell">' + testM.r2.toFixed(3) + '</td>' +
+        '<td class="mono-cell">' + (model.mape==null?'—':model.mape.toFixed(1)+'%') + '</td>' +
+        '<td class="mono-cell">' + (testM.mape==null?'—':testM.mape.toFixed(1)+'%') + '</td></tr>';
+    });
+    valTrendTableEl.innerHTML = html;
+  }
+
+  function renderValidationTab(filt){
+    const rows = filteredRowsForValidation(filt);
+    const trainRows = rows.filter(function(r){ return r[0] < VAL_SPLIT_WEEK; });
+    const testRows = rows.filter(function(r){ return r[0] >= VAL_SPLIT_WEEK; });
+    const k = WHATIF_DRIVERS.length;
+    if(trainRows.length <= k+1 || testRows.length === 0){ insufficientValidationData(); return; }
+
+    const X = trainRows.map(function(r){ const row=[1]; WHATIF_DRIVERS.forEach(function(d){ row.push(r[F[d.key]]); }); return row; });
+    const y = trainRows.map(function(r){ return r[F['Sales_Revenue']]; });
+    const fit = fitOLS(X, y);
+    if(!fit){ insufficientValidationData(); return; }
+
+    const trainPred = trainRows.map(function(r){ return predictRowVector(fit.beta, r); });
+    const trainActual = y;
+    const testActual = testRows.map(function(r){ return r[F['Sales_Revenue']]; });
+    const testPred = testRows.map(function(r){ return predictRowVector(fit.beta, r); });
+    const trainMetrics = rowMetrics(trainActual, trainPred);
+    const testMetrics = rowMetrics(testActual, testPred);
+    renderValidationMetrics(trainMetrics, testMetrics);
+
+    const actualByWeek = new Map(), predByWeek = new Map();
+    testRows.forEach(function(r, i){
+      const w = r[0];
+      actualByWeek.set(w, (actualByWeek.get(w)||0) + testActual[i]);
+      predByWeek.set(w, (predByWeek.get(w)||0) + testPred[i]);
+    });
+    const testWeeks = Array.from(actualByWeek.keys()).sort(function(a,b){ return a-b; });
+    renderValidationChart(testWeeks, actualByWeek, predByWeek);
+
+    renderCategoryAccuracy(testRows, fit.beta, testMetrics.mape || 0);
+    renderImportance(fit, trainRows);
+    renderTrendValidation(rows);
+  }
+
   /* ---------------- Diagnostic analysis: correlation heatmap ---------------- */
   const CORR_VARS = [
     { key:'Foot_Traffic', label:'Foot Traffic' },
@@ -1872,6 +2225,7 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     renderForecastPanel(rows, filt);
     renderProbabilityPanel(rows, filt);
     renderWhatifPanel(rows);
+    renderValidationTab(filt);
     renderDiagnostics(rows);
   }
 
@@ -1889,6 +2243,15 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     storeSel.value = 'all'; catSel.value = 'all';
     wkStart.value = '0'; wkEnd.value = String(WEEKS.length-1);
     recalc();
+  });
+
+  document.getElementById('tab-bar').addEventListener('click', function(evt){
+    const btn = evt.target.closest('.tab-btn');
+    if(!btn) return;
+    const tab = btn.dataset.tab;
+    Array.from(document.querySelectorAll('#tab-bar .tab-btn')).forEach(function(b){ b.classList.toggle('active', b === btn); });
+    document.getElementById('tab-dashboard').hidden = tab !== 'dashboard';
+    document.getElementById('tab-validation').hidden = tab !== 'validation';
   });
 
   recalc();
