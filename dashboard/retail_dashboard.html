@@ -255,6 +255,28 @@
   @media (max-width:900px){ .forecast-stats{ grid-template-columns:repeat(2,1fr); } }
   @media (max-width:520px){ .forecast-stats{ grid-template-columns:1fr; } }
 
+  /* ---------- What-if simulator ---------- */
+  .whatif-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:16px 28px; margin:14px 0 16px; }
+  @media (max-width:820px){ .whatif-grid{ grid-template-columns:1fr; } }
+  .whatif-slider{ display:flex; flex-direction:column; gap:4px; }
+  .whatif-slider .wf-top{ display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px; gap:8px; }
+  .whatif-slider .wf-label{ font-weight:600; }
+  .whatif-slider .wf-value{ font-weight:600; }
+  .whatif-slider .wf-delta{ font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:5px; margin-left:6px; white-space:nowrap; }
+  .whatif-slider .wf-delta.good{ background:var(--good-soft); color:var(--good); }
+  .whatif-slider .wf-delta.bad{ background:var(--critical-soft); color:var(--critical); }
+  .whatif-slider .wf-delta.neutral{ background:var(--surface-2); color:var(--text-muted); }
+  .whatif-slider input[type=range]{ width:100%; accent-color:var(--accent); height:18px; }
+  .whatif-slider .wf-coef{ font-size:11px; color:var(--text-muted); }
+  .whatif-actions{ display:flex; justify-content:flex-end; margin-bottom:4px; }
+  .scenario-cards{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:6px; }
+  @media (max-width:700px){ .scenario-cards{ grid-template-columns:1fr; } }
+  .scenario-card{ border:1px solid var(--border); border-radius:var(--radius-m); padding:14px 16px; background:var(--surface-2); }
+  .scenario-card.is-scenario{ background:var(--accent-soft); border-color:var(--accent); }
+  .scenario-card .sc-label{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); font-weight:700; }
+  .scenario-card .sc-value{ font-size:24px; font-weight:700; margin:4px 0; font-family:"IBM Plex Mono",monospace; }
+  .scenario-card .sc-sub{ font-size:12px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+
   /* ---------- Diagnostic analysis ---------- */
   .diag-grid{ display:grid; grid-template-columns:minmax(260px, 380px) 1fr; gap:24px; align-items:start; }
   @media (max-width:820px){ .diag-grid{ grid-template-columns:1fr; } }
@@ -411,6 +433,29 @@
   <p class="heatmap-caption" id="forecast-caption"></p>
 </div>
 
+<div class="panel" id="whatif-panel">
+  <div class="section-head">
+    <h2>What-If Sales Simulator</h2>
+    <span class="hint">Multivariate regression &middot; adjust drivers to see the impact</span>
+  </div>
+  <p class="heatmap-caption" id="whatif-model-caption"></p>
+  <div class="whatif-grid" id="whatif-sliders"></div>
+  <div class="whatif-actions">
+    <button class="btn reset" id="whatif-reset" type="button">Reset to forecast</button>
+  </div>
+
+  <div class="diag-subhead section-head">
+    <h2>Scenario Comparison</h2>
+    <span class="hint">Baseline (model fit) vs. your custom scenario</span>
+  </div>
+  <div class="scenario-cards" id="scenario-cards"></div>
+
+  <div class="var-chart" style="margin-top:20px;">
+    <h4>Driver contribution to scenario delta</h4>
+    <div id="whatif-contrib"></div>
+  </div>
+</div>
+
 <div class="panel">
   <div class="section-head">
     <h2>Diagnostic Analysis</h2>
@@ -457,13 +502,12 @@
 <div class="panel">
   <div class="section-head">
     <h2>Build Roadmap</h2>
-    <span class="hint">Iteration 3 adds the forecast model &amp; prediction intervals — remaining below</span>
+    <span class="hint">Iteration 4 adds the Sales Revenue driver regression &amp; what-if simulator — remaining below</span>
   </div>
   <div class="roadmap">
-    <div class="rm-item"><span class="num">04</span>Multivariate OLS regression for Sales Revenue &amp; Total Expenses across all named business drivers, with coefficient significance</div>
-    <div class="rm-item"><span class="num">05</span>Interactive what-if simulator across 6+ business drivers</div>
+    <div class="rm-item"><span class="num">05</span>Matching multivariate regression &amp; what-if controls for Total Expenses (COGS rate, labour, shipping, returns)</div>
     <div class="rm-item"><span class="num">06</span>Region-level segmentation &amp; top/bottom performer rankings</div>
-    <div class="rm-item"><span class="num">07</span>Model validation panel for the multivariate regression — R², RMSE, MAPE</div>
+    <div class="rm-item"><span class="num">07</span>Model validation panel for the driver regressions — RMSE, coefficient significance</div>
   </div>
 </div>
 
@@ -1250,6 +1294,196 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     renderForecastPanel(lastRows, lastFilt);
   });
 
+  /* =================================================================
+     What-if simulator: a multivariate OLS regression of Sales Revenue
+     on 8 business drivers, fit at row level (store-category-week) over
+     whatever the current filters select. Reuses the same fitOLS engine
+     as the forecast model above.
+     ================================================================= */
+  const WHATIF_DRIVERS = [
+    { key:'Foot_Traffic', label:'Foot Traffic', step:10, coefMult:100, coefLabel:'+100 visits/wk',
+      format:function(v){ return Math.round(v).toLocaleString() + ' /wk'; } },
+    { key:'Marketing_Spend', label:'Marketing Spend', step:25, coefMult:100, coefLabel:'+$100 spend',
+      format:function(v){ return fmtCAD0.format(v); } },
+    { key:'Discount_Rate', label:'Discount Rate', step:0.005, coefMult:0.01, coefLabel:'+1 pt discount',
+      format:function(v){ return (v*100).toFixed(1) + '%'; } },
+    { key:'Conversion_Rate', label:'Conversion Rate', step:0.005, coefMult:0.01, coefLabel:'+1 pt conversion',
+      format:function(v){ return (v*100).toFixed(1) + '%'; } },
+    { key:'Avg_Transaction_Value', label:'Avg Transaction Value', step:1, coefMult:1, coefLabel:'+$1 basket',
+      format:function(v){ return fmtCAD0.format(v); } },
+    { key:'Inventory_Availability', label:'Inventory Availability', step:0.005, coefMult:0.01, coefLabel:'+1 pt availability',
+      format:function(v){ return (v*100).toFixed(1) + '%'; } },
+    { key:'Competitor_Price_Index', label:'Competitor Price Index', step:0.005, coefMult:0.01, coefLabel:'+0.01 index',
+      format:function(v){ return v.toFixed(2) + 'x'; } },
+    { key:'Consumer_Confidence_Index', label:'Consumer Confidence', step:0.5, coefMult:1, coefLabel:'+1.0 index',
+      format:function(v){ return v.toFixed(1); } }
+  ];
+
+  /* Fits Sales_Revenue ~ intercept + the 8 drivers above, at row level, on
+     whatever rows the current filters select — so the coefficients (and the
+     "baseline" they imply) are always specific to the current selection. */
+  function buildSalesRegression(rows){
+    const n = rows.length, k = WHATIF_DRIVERS.length;
+    if(n <= k + 1) return null;
+    const X = rows.map(function(r){
+      const row = [1];
+      WHATIF_DRIVERS.forEach(function(d){ row.push(r[F[d.key]]); });
+      return row;
+    });
+    const y = rows.map(function(r){ return r[F['Sales_Revenue']]; });
+    const fit = fitOLS(X, y);
+    if(!fit) return null;
+    const means = WHATIF_DRIVERS.map(function(d){
+      let s = 0; for(let j=0;j<n;j++) s += rows[j][F[d.key]];
+      return s/n;
+    });
+    const mins = WHATIF_DRIVERS.map(function(d){ return Math.min.apply(null, rows.map(function(r){ return r[F[d.key]]; })); });
+    const maxs = WHATIF_DRIVERS.map(function(d){ return Math.max.apply(null, rows.map(function(r){ return r[F[d.key]]; })); });
+    return { fit:fit, means:means, mins:mins, maxs:maxs, n:n };
+  }
+
+  /* Because the model is linear with no interaction terms, moving one
+     driver's value from its baseline mean to a new level changes the total
+     predicted sales across all n observations by exactly
+         coefficient x (new value - baseline mean) x n
+     — regardless of what the other drivers are doing. That's what lets the
+     scenario total below be computed directly from the coefficients rather
+     than by re-summing predictions row by row. */
+  let whatifValues = {}; // driver key -> user-set slider value; absent = baseline mean
+  let whatifModel = null;
+
+  function computeScenario(){
+    if(!whatifModel) return null;
+    const beta = whatifModel.fit.beta, n = whatifModel.n;
+    const baselineTotal = whatifModel.fit.fitted.reduce(function(s,v){ return s+v; }, 0);
+    let scenarioTotal = baselineTotal;
+    const contributions = WHATIF_DRIVERS.map(function(d, i){
+      const mean = whatifModel.means[i];
+      const val = whatifValues[d.key] != null ? whatifValues[d.key] : mean;
+      const contribution = beta[i+1] * (val - mean) * n;
+      scenarioTotal += contribution;
+      return { label:d.label, value:val, mean:mean, contribution:contribution };
+    });
+    return { baselineTotal: Math.max(0, baselineTotal), scenarioTotal: Math.max(0, scenarioTotal), contributions: contributions };
+  }
+
+  const whatifModelCaptionEl = document.getElementById('whatif-model-caption');
+  const whatifSlidersEl = document.getElementById('whatif-sliders');
+  const scenarioCardsEl = document.getElementById('scenario-cards');
+  const whatifContribEl = document.getElementById('whatif-contrib');
+
+  function renderWhatifCaption(){
+    if(!whatifModel){
+      whatifModelCaptionEl.textContent = 'Not enough observations in this selection to fit the driver regression (need more than ' + (WHATIF_DRIVERS.length+1) + ' rows) — widen the filters to use the simulator.';
+      return;
+    }
+    whatifModelCaptionEl.textContent = 'Sales Revenue regressed on these ' + WHATIF_DRIVERS.length + ' drivers across ' + whatifModel.n.toLocaleString() +
+      ' store-category-week observations in this selection (R² = ' + whatifModel.fit.r2.toFixed(2) + '). Each slider moves that driver for every observation while holding the rest at their own actual values; the impact shown is the driver’s regression coefficient × the size of the change × the number of observations.';
+  }
+
+  function updateSliderReadout(d, i){
+    const val = parseFloat(document.getElementById('wf-slider-' + d.key).value);
+    document.getElementById('wf-val-' + d.key).textContent = d.format(val);
+    const mean = whatifModel.means[i];
+    const diff = val - mean;
+    const deltaEl = document.getElementById('wf-delta-' + d.key);
+    if(Math.abs(diff) < d.step/2){
+      deltaEl.textContent = 'baseline';
+      deltaEl.className = 'wf-delta neutral';
+    } else {
+      const pct = mean !== 0 ? (diff/mean)*100 : 0;
+      const contribution = whatifModel.fit.beta[i+1] * diff * whatifModel.n;
+      deltaEl.textContent = (diff>=0?'+':'') + pct.toFixed(0) + '%';
+      deltaEl.className = 'wf-delta ' + (contribution >= 0 ? 'good' : 'bad');
+    }
+    const impactPerUnit = whatifModel.fit.beta[i+1] * d.coefMult;
+    document.getElementById('wf-coef-' + d.key).textContent =
+      'Coefficient: ' + (impactPerUnit>=0?'+':'') + fmtCAD0.format(impactPerUnit) + ' sales per ' + d.coefLabel;
+  }
+
+  function renderWhatifSliders(){
+    whatifSlidersEl.innerHTML = '';
+    if(!whatifModel) return;
+    WHATIF_DRIVERS.forEach(function(d, i){
+      const mean = whatifModel.means[i];
+      const spread = whatifModel.maxs[i] - whatifModel.mins[i];
+      const margin = spread > 0 ? spread * 0.25 : (Math.abs(mean) * 0.25 || 1);
+      let min = whatifModel.mins[i] - margin;
+      const max = whatifModel.maxs[i] + margin;
+      if(d.key !== 'Competitor_Price_Index' && d.key !== 'Consumer_Confidence_Index') min = Math.max(0, min);
+      let val;
+      if(whatifValues[d.key] == null){
+        val = mean; // untouched — track the current selection's baseline
+      } else {
+        val = Math.min(max, Math.max(min, whatifValues[d.key])); // clamp to the new range and persist
+        whatifValues[d.key] = val;
+      }
+
+      const wrap = document.createElement('div');
+      wrap.className = 'whatif-slider';
+      wrap.innerHTML =
+        '<div class="wf-top"><span class="wf-label">' + d.label + '</span>' +
+        '<span><span class="wf-value mono" id="wf-val-' + d.key + '"></span>' +
+        '<span class="wf-delta neutral" id="wf-delta-' + d.key + '"></span></span></div>' +
+        '<input type="range" id="wf-slider-' + d.key + '" min="' + min + '" max="' + max + '" step="' + d.step + '" value="' + val + '">' +
+        '<div class="wf-coef" id="wf-coef-' + d.key + '"></div>';
+      whatifSlidersEl.appendChild(wrap);
+
+      wrap.querySelector('input').addEventListener('input', function(evt){
+        whatifValues[d.key] = parseFloat(evt.target.value);
+        updateSliderReadout(d, i);
+        renderScenarioResults();
+      });
+      updateSliderReadout(d, i);
+    });
+  }
+
+  function renderScenarioResults(){
+    const scenario = computeScenario();
+    if(!scenario){
+      scenarioCardsEl.innerHTML = '';
+      whatifContribEl.innerHTML = '';
+      return;
+    }
+    const delta = scenario.scenarioTotal - scenario.baselineTotal;
+    const deltaPct = scenario.baselineTotal > 0 ? delta / scenario.baselineTotal : 0;
+    const kind = Math.abs(delta) < 1 ? 'warn' : (delta >= 0 ? 'good' : 'bad');
+    scenarioCardsEl.innerHTML =
+      '<div class="scenario-card"><div class="sc-label">Baseline &mdash; model fit</div>' +
+      '<div class="sc-value">' + fmtCAD0.format(scenario.baselineTotal) + '</div>' +
+      '<div class="sc-sub">Current average driver levels &middot; R² ' + whatifModel.fit.r2.toFixed(2) + '</div></div>' +
+      '<div class="scenario-card is-scenario"><div class="sc-label">Your scenario</div>' +
+      '<div class="sc-value">' + fmtCAD0.format(scenario.scenarioTotal) + '</div>' +
+      '<div class="sc-sub">' + pillHtml((delta>=0?'+':'') + fmtCAD0Compact.format(delta) + ' (' + fmtPct1(deltaPct) + ') vs. baseline', kind) + '</div></div>';
+
+    const maxAbs = Math.max(1, Math.max.apply(null, scenario.contributions.map(function(c){ return Math.abs(c.contribution); })));
+    const sorted = scenario.contributions.slice().sort(function(a,b){ return Math.abs(b.contribution) - Math.abs(a.contribution); });
+    whatifContribEl.innerHTML = sorted.map(function(c){
+      const half = Math.min(50, (Math.abs(c.contribution)/maxAbs) * 50);
+      const isZero = Math.abs(c.contribution) < 1;
+      const colorVarName = isZero ? '--text-muted' : (c.contribution >= 0 ? '--good' : '--critical');
+      const barStyle = (c.contribution >= 0 ? 'left:50%;' : ('left:' + (50-half) + '%;')) + 'width:' + half + '%; background:var(' + colorVarName + ');';
+      const pillKind = isZero ? 'warn' : (c.contribution >= 0 ? 'good' : 'bad');
+      const pillText = isZero ? fmtCAD0Compact.format(0) : ((c.contribution>=0?'+':'') + fmtCAD0Compact.format(c.contribution));
+      return '<div class="var-row"><div class="var-row-top"><span class="var-row-name">' + c.label + '</span>' +
+        '<span class="pill ' + pillKind + '">' + pillText + '</span></div>' +
+        '<div class="var-row-bottom"><div class="var-track"><div class="center-line"></div><div class="bar" style="' + barStyle + '"></div></div></div></div>';
+    }).join('');
+  }
+
+  function renderWhatifPanel(rows){
+    whatifModel = buildSalesRegression(rows);
+    renderWhatifCaption();
+    renderWhatifSliders();
+    renderScenarioResults();
+  }
+
+  document.getElementById('whatif-reset').addEventListener('click', function(){
+    whatifValues = {};
+    renderWhatifSliders();
+    renderScenarioResults();
+  });
+
   /* ---------------- Diagnostic analysis: correlation heatmap ---------------- */
   const CORR_VARS = [
     { key:'Foot_Traffic', label:'Foot Traffic' },
@@ -1457,6 +1691,7 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     renderChart(rows, filt);
     renderOverview(filt, rows);
     renderForecastPanel(rows, filt);
+    renderWhatifPanel(rows);
     renderDiagnostics(rows);
   }
 
