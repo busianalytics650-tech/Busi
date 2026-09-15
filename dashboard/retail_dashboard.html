@@ -317,6 +317,10 @@
   .whatif-slider input[type=range]{ width:100%; accent-color:var(--accent); height:18px; }
   .whatif-slider .wf-coef{ font-size:11px; color:var(--text-muted); }
   .whatif-actions{ display:flex; justify-content:flex-end; margin-bottom:4px; }
+  .preset-bar{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:14px 0 16px; }
+  .preset-bar .btn.reset{ margin-left:auto; }
+  .toggle-btn.preset-active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .wf-efficiency{ font-size:11px; color:var(--text-muted); }
   .scenario-cards{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:6px; }
   @media (max-width:700px){ .scenario-cards{ grid-template-columns:1fr; } }
   .scenario-card{ border:1px solid var(--border); border-radius:var(--radius-m); padding:14px 16px; background:var(--surface-2); }
@@ -324,6 +328,17 @@
   .scenario-card .sc-label{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); font-weight:700; }
   .scenario-card .sc-value{ font-size:24px; font-weight:700; margin:4px 0; font-family:"IBM Plex Mono",monospace; }
   .scenario-card .sc-sub{ font-size:12px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+
+  /* ---------- Executive summary ---------- */
+  .exec-summary-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+  .exec-item{ display:flex; gap:12px; align-items:flex-start; }
+  .exec-tag{
+    flex:none; width:122px; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--accent-strong); background:var(--accent-soft); border-radius:6px; padding:5px 6px;
+    text-align:center; margin-top:1px; line-height:1.3; box-sizing:border-box;
+  }
+  .exec-item p{ margin:0; font-size:13.5px; line-height:1.55; color:var(--text-primary); flex:1; }
+  .exec-item p b{ font-weight:700; }
 
   /* ---------- Diagnostic analysis ---------- */
   .diag-grid{ display:grid; grid-template-columns:minmax(260px, 380px) 1fr; gap:24px; align-items:start; }
@@ -444,6 +459,14 @@
 </div>
 
 <div id="tab-dashboard">
+<div class="panel" id="exec-summary-panel">
+  <div class="section-head">
+    <h2>Executive Summary</h2>
+    <span class="hint">Auto-generated from the current selection &middot; updates with the filters</span>
+  </div>
+  <ul class="exec-summary-list" id="exec-summary-list"></ul>
+</div>
+
 <div class="section-head">
   <h2>Executive KPI Summary</h2>
   <span class="hint">Reflects current filter selection · figures in CAD</span>
@@ -518,10 +541,20 @@
     <span class="hint">Multivariate regression &middot; adjust drivers to see the impact</span>
   </div>
   <p class="heatmap-caption" id="whatif-model-caption"></p>
-  <div class="whatif-grid" id="whatif-sliders"></div>
-  <div class="whatif-actions">
+
+  <div class="preset-bar">
+    <button type="button" class="toggle-btn" data-preset="conservative">Conservative</button>
+    <button type="button" class="toggle-btn" data-preset="base">Base Case</button>
+    <button type="button" class="toggle-btn" data-preset="optimistic">Optimistic</button>
     <button class="btn reset" id="whatif-reset" type="button">Reset to forecast</button>
   </div>
+
+  <div class="val-metrics-wrap">
+    <table class="val-metrics" id="preset-scenario-table"></table>
+  </div>
+  <p class="heatmap-caption" id="preset-scenario-caption"></p>
+
+  <div class="whatif-grid" id="whatif-sliders"></div>
 
   <div class="diag-subhead section-head">
     <h2>Scenario Comparison</h2>
@@ -618,7 +651,7 @@
 <div class="panel">
   <div class="section-head">
     <h2>Build Roadmap</h2>
-    <span class="hint">Iteration 7 adds the Performance Dashboard — one item left</span>
+    <span class="hint">Iteration 8 adds preset scenarios &amp; the Executive Summary — one item left</span>
   </div>
   <div class="roadmap">
     <div class="rm-item"><span class="num">08</span>Matching multivariate regression &amp; what-if controls for Total Expenses (COGS rate, labour, shipping, returns)</div>
@@ -1670,6 +1703,80 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
      than by re-summing predictions row by row. */
   let whatifValues = {}; // driver key -> user-set slider value; absent = baseline mean
   let whatifModel = null;
+  let whatifBaselineExpense = 0; // actual Total_Expense summed over the current filtered rows
+
+  /* Three named scenarios, each defined as a % change from baseline on a
+     handful of drivers (others stay put). Optimistic is exactly what was
+     asked for: foot traffic +10%, conversion +5%, marketing +15%.
+     Conservative mirrors it downward; Base Case is "no change". */
+  const PRESET_SCENARIOS = {
+    conservative: { label:'Conservative', deltas:{ Foot_Traffic:-0.10, Conversion_Rate:-0.05, Marketing_Spend:-0.15 } },
+    base: { label:'Base Case', deltas:{} },
+    optimistic: { label:'Optimistic', deltas:{ Foot_Traffic:0.10, Conversion_Rate:0.05, Marketing_Spend:0.15 } }
+  };
+
+  /* Sales moves by coefficient x change x n, same linear-model shortcut used
+     everywhere else in this section. Operating profit then needs the cash
+     cost of marketing spend accounted for explicitly, since Marketing_Spend
+     is tracked separately from Total_Expense in this dataset (it is not one
+     of the components Total_Expense is built from) — so a marketing change
+     is added to baseline expense directly rather than left out entirely.
+     Other drivers here have no modeled effect on cost, since the expense
+     driver regression is still on the roadmap. */
+  function computeNamedScenario(deltas){
+    if(!whatifModel) return null;
+    const beta = whatifModel.fit.beta, n = whatifModel.n;
+    const baselineSales = whatifModel.fit.fitted.reduce(function(s,v){ return s+v; }, 0);
+    let scenarioSales = baselineSales, marketingDollarDelta = 0;
+    Object.keys(deltas).forEach(function(key){
+      const i = WHATIF_DRIVERS.findIndex(function(d){ return d.key === key; });
+      if(i < 0) return;
+      const mean = whatifModel.means[i];
+      const diff = mean*deltas[key];
+      scenarioSales += beta[i+1]*diff*n;
+      if(key === 'Marketing_Spend') marketingDollarDelta = diff*n;
+    });
+    const scenarioExpense = whatifBaselineExpense + marketingDollarDelta;
+    const scenarioProfit = scenarioSales - scenarioExpense;
+    return {
+      sales: Math.max(0, scenarioSales), expense: Math.max(0, scenarioExpense),
+      profit: scenarioProfit, margin: scenarioSales > 0 ? scenarioProfit/scenarioSales : 0
+    };
+  }
+
+  function profitPillKind(key, profit, baseProfit){
+    if(profit < 0) return 'bad';
+    if(key === 'base') return 'warn';
+    return profit >= baseProfit ? 'good' : 'bad';
+  }
+
+  function renderPresetScenarioTable(){
+    const tableEl = document.getElementById('preset-scenario-table');
+    const capEl = document.getElementById('preset-scenario-caption');
+    if(!whatifModel){ tableEl.innerHTML = ''; capEl.textContent = ''; return; }
+    const order = ['conservative','base','optimistic'];
+    const results = order.map(function(key){ return { key:key, def:PRESET_SCENARIOS[key], out:computeNamedScenario(PRESET_SCENARIOS[key].deltas) }; });
+    const baseProfit = results[1].out.profit;
+    function deltaDesc(deltas){
+      const parts = Object.keys(deltas).map(function(k){
+        const d = WHATIF_DRIVERS.find(function(x){ return x.key === k; });
+        const pct = deltas[k]*100;
+        return d.label + ' ' + (pct>=0?'+':'') + pct.toFixed(0) + '%';
+      });
+      return parts.length ? parts.join(', ') : 'No changes from baseline';
+    }
+    let html = '<tr><th>Metric</th>' + results.map(function(r){ return '<th>' + r.def.label + '</th>'; }).join('') + '</tr>';
+    html += '<tr><td class="metric-name">Assumptions</td>' + results.map(function(r){
+      return '<td style="font-size:11px; color:var(--text-muted); font-weight:400;">' + deltaDesc(r.def.deltas) + '</td>';
+    }).join('') + '</tr>';
+    html += '<tr><td class="metric-name">Sales</td>' + results.map(function(r){ return '<td class="mono-cell">' + fmtCAD0.format(r.out.sales) + '</td>'; }).join('') + '</tr>';
+    html += '<tr><td class="metric-name">Operating Profit</td>' + results.map(function(r){
+      return '<td class="mono-cell">' + pillHtml(fmtCAD0.format(r.out.profit), profitPillKind(r.key, r.out.profit, baseProfit)) + '</td>';
+    }).join('') + '</tr>';
+    html += '<tr><td class="metric-name">Operating Margin %</td>' + results.map(function(r){ return '<td class="mono-cell">' + (r.out.margin*100).toFixed(1) + '%</td>'; }).join('') + '</tr>';
+    tableEl.innerHTML = html;
+    capEl.textContent = 'Operating profit holds every cost fixed at the current selection’s actual total except marketing spend, which is added or removed as real cash cost on top of that baseline — the other moved drivers (foot traffic, conversion rate) affect modeled sales only, since the expense driver regression is still on the roadmap.';
+  }
 
   function computeScenario(){
     if(!whatifModel) return null;
@@ -1718,6 +1825,16 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     const impactPerUnit = whatifModel.fit.beta[i+1] * d.coefMult;
     document.getElementById('wf-coef-' + d.key).textContent =
       'Coefficient: ' + (impactPerUnit>=0?'+':'') + fmtCAD0.format(impactPerUnit) + ' sales per ' + d.coefLabel;
+
+    if(d.key === 'Marketing_Spend'){
+      const scenario = computeScenario();
+      const n = whatifModel.n;
+      const scenarioSpend = val * n, baselineSpend = mean * n;
+      const efficiency = scenarioSpend > 0 ? scenario.scenarioTotal / scenarioSpend : 0;
+      const baselineEfficiency = baselineSpend > 0 ? scenario.baselineTotal / baselineSpend : 0;
+      document.getElementById('wf-efficiency-' + d.key).textContent =
+        'Efficiency: $' + efficiency.toFixed(2) + ' sales per $1 spent (baseline $' + baselineEfficiency.toFixed(2) + ')';
+    }
   }
 
   function renderWhatifSliders(){
@@ -1745,12 +1862,19 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
         '<span><span class="wf-value mono" id="wf-val-' + d.key + '"></span>' +
         '<span class="wf-delta neutral" id="wf-delta-' + d.key + '"></span></span></div>' +
         '<input type="range" id="wf-slider-' + d.key + '" min="' + min + '" max="' + max + '" step="' + d.step + '" value="' + val + '">' +
-        '<div class="wf-coef" id="wf-coef-' + d.key + '"></div>';
+        '<div class="wf-coef" id="wf-coef-' + d.key + '"></div>' +
+        '<div class="wf-efficiency" id="wf-efficiency-' + d.key + '"></div>';
       whatifSlidersEl.appendChild(wrap);
 
       wrap.querySelector('input').addEventListener('input', function(evt){
         whatifValues[d.key] = parseFloat(evt.target.value);
         updateSliderReadout(d, i);
+        if(d.key !== 'Marketing_Spend'){
+          // marketing efficiency depends on the total scenario sales, which
+          // just changed even though this wasn't the marketing slider
+          const mktI = WHATIF_DRIVERS.findIndex(function(x){ return x.key === 'Marketing_Spend'; });
+          if(mktI >= 0) updateSliderReadout(WHATIF_DRIVERS[mktI], mktI);
+        }
         renderScenarioResults();
       });
       updateSliderReadout(d, i);
@@ -1792,13 +1916,34 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
 
   function renderWhatifPanel(rows){
     whatifModel = buildSalesRegression(rows);
+    whatifBaselineExpense = sumField(rows, 'Total_Expense');
     renderWhatifCaption();
+    renderWhatifSliders();
+    renderScenarioResults();
+    renderPresetScenarioTable();
+  }
+
+  function applyPreset(key){
+    const preset = PRESET_SCENARIOS[key];
+    if(!preset || !whatifModel) return;
+    whatifValues = {};
+    WHATIF_DRIVERS.forEach(function(d, i){
+      if(preset.deltas[d.key] != null) whatifValues[d.key] = whatifModel.means[i] * (1 + preset.deltas[d.key]);
+    });
+    Array.from(document.querySelectorAll('.preset-bar .toggle-btn')).forEach(function(b){
+      b.classList.toggle('preset-active', b.dataset.preset === key);
+    });
     renderWhatifSliders();
     renderScenarioResults();
   }
 
+  Array.from(document.querySelectorAll('.preset-bar .toggle-btn')).forEach(function(btn){
+    btn.addEventListener('click', function(){ applyPreset(btn.dataset.preset); });
+  });
+
   document.getElementById('whatif-reset').addEventListener('click', function(){
     whatifValues = {};
+    Array.from(document.querySelectorAll('.preset-bar .toggle-btn')).forEach(function(b){ b.classList.remove('preset-active'); });
     renderWhatifSliders();
     renderScenarioResults();
   });
@@ -2424,6 +2569,79 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     }
   }
 
+  /* =================================================================
+     Executive Summary: a short, auto-generated narrative stitched
+     together from numbers already computed elsewhere in this file — the
+     KPI totals, the driver regression's standardized coefficients (same
+     model as the What-If Simulator), and the forecast model. Nothing
+     here is computed fresh except the driver-importance ranking, which
+     needs the current selection's own rows (not just the training split
+     Model Validation uses).
+     ================================================================= */
+  function computeTopDrivers(rows){
+    if(!whatifModel) return [];
+    const yVals = rows.map(function(r){ return r[F['Sales_Revenue']]; });
+    const stdY = stdDev(yVals);
+    const list = WHATIF_DRIVERS.map(function(d, i){
+      const xVals = rows.map(function(r){ return r[F[d.key]]; });
+      const stdX = stdDev(xVals);
+      return { label:d.label, standardized: stdY > 0 ? whatifModel.fit.beta[i+1]*stdX/stdY : 0 };
+    });
+    list.sort(function(a,b){ return Math.abs(b.standardized) - Math.abs(a.standardized); });
+    return list;
+  }
+
+  const execSummaryListEl = document.getElementById('exec-summary-list');
+
+  function renderExecutiveSummary(rows, filt, k){
+    if(rows.length === 0){
+      execSummaryListEl.innerHTML = '<li class="exec-item"><p>No data in the current selection.</p></li>';
+      return;
+    }
+    const expenseVariancePct = k.expenseBudget > 0 ? (k.actualExpenses-k.expenseBudget)/k.expenseBudget : 0;
+    const topDrivers = computeTopDrivers(rows);
+
+    const salesSeries = weeklySeries(rows, 'Sales_Revenue', filt.weekStart, filt.weekEnd);
+    const expenseSeries = weeklySeries(rows, 'Total_Expense', filt.weekStart, filt.weekEnd);
+    const salesModel = buildForecastModel(salesSeries);
+    const expenseModel = buildForecastModel(expenseSeries);
+    const salesFc = salesModel ? forecastSummary(salesModel, filt.weekEnd, 12) : null;
+    const expenseFc = expenseModel ? forecastSummary(expenseModel, filt.weekEnd, 12) : null;
+
+    const items = [];
+    items.push({ tag:'Current State', html:
+      '<b>Sales</b> are running at ' + fmtCAD0.format(k.actualSales) + ' against a ' + fmtCAD0.format(k.salesBudget) + ' budget (' + fmtPct1(k.variancePct) + '), while <b>expenses</b> stand at ' +
+      fmtCAD0.format(k.actualExpenses) + ' against a ' + fmtCAD0.format(k.expenseBudget) + ' budget (' + fmtPct1(expenseVariancePct) + ').'
+    });
+    items.push({ tag:'Bottom Line', html:
+      'That nets to <b>' + fmtCAD0.format(k.opProfit) + '</b> in operating profit — a ' + (k.actualSales>0 ? ((k.opProfit/k.actualSales)*100).toFixed(1) : '0.0') + '% margin — across ' +
+      k.rowCount.toLocaleString() + ' store-category-week line items in this selection.'
+    });
+    if(topDrivers.length >= 2){
+      const top1 = topDrivers[0], top2 = topDrivers[1];
+      const ratio = Math.abs(top2.standardized) > 0.005 ? Math.abs(top1.standardized/top2.standardized) : null;
+      items.push({ tag:'Key Insight', html:
+        '<b>' + top1.label + '</b> is the strongest lever on sales in this selection (standardized coefficient ' + (top1.standardized>=0?'+':'') + top1.standardized.toFixed(2) + 'σ), ahead of <b>' + top2.label + '</b> (' + (top2.standardized>=0?'+':'') + top2.standardized.toFixed(2) + 'σ)' +
+        (ratio ? ' — roughly ' + ratio.toFixed(1) + '× the effect per standard-deviation move.' : '.')
+      });
+    }
+    if(salesFc){
+      items.push({ tag:'Outlook', html:
+        'The 12-week forecast projects <b>' + fmtCAD0.format(salesFc.total) + '</b> in sales (95% PI ' + fmtCAD0Compact.format(salesFc.lo) + '–' + fmtCAD0Compact.format(salesFc.hi) + ')' +
+        (expenseFc ? ' against a projected <b>' + fmtCAD0.format(expenseFc.total) + '</b> in expenses over the same horizon' : '') + '.'
+      });
+    }
+    if(topDrivers.length >= 2){
+      const top1 = topDrivers[0], top2 = topDrivers[1];
+      items.push({ tag:'Recommendation', html:
+        'Management should prioritize <b>' + top1.label.toLowerCase() + '</b> initiatives over incremental <b>' + top2.label.toLowerCase() + '</b> efforts — the model finds it moves sales substantially more per unit of change (see Which Drivers Matter Most in Model Validation). This is descriptive, not a guaranteed causal effect.'
+      });
+    }
+    execSummaryListEl.innerHTML = items.map(function(it){
+      return '<li class="exec-item"><span class="exec-tag">' + it.tag + '</span><p>' + it.html + '</p></li>';
+    }).join('');
+  }
+
   /* ---------------- Header meta (static, full dataset) ---------------- */
   document.getElementById('meta-span').textContent = fmtDate(WEEKS[0]) + ' – ' + fmtDate(WEEKS[WEEKS.length-1]);
   document.getElementById('meta-rows').textContent = ROWS.length.toLocaleString() + ' rows · ' + STORES.length + ' stores';
@@ -2434,7 +2652,8 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     const filt = getFilters();
     const rows = filteredRows(filt);
     lastRows = rows; lastFilt = filt;
-    renderKPIs(computeKPIs(filt));
+    const kpis = computeKPIs(filt);
+    renderKPIs(kpis);
     renderChart(rows, filt);
     renderOverview(filt, rows);
     renderForecastPanel(rows, filt);
@@ -2443,6 +2662,7 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     renderValidationTab(filt);
     renderDiagnostics(rows);
     renderPerformancePanel(rows, filt);
+    renderExecutiveSummary(rows, filt, kpis);
   }
 
   regionSel.addEventListener('change', function(){ rebuildStoreOptions(); recalc(); });
