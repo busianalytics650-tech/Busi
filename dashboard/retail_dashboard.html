@@ -25,6 +25,8 @@
     --critical:#B7382B;
     --critical-soft:#F8E3DF;
     --line-budget:#98A294;
+    --corr-pos:#1B6E63;
+    --corr-neg:#A85A1E;
     --shadow: 0 1px 2px rgba(20,30,22,0.06), 0 8px 24px -16px rgba(20,30,22,0.18);
     --radius-s:8px;
     --radius-m:12px;
@@ -53,6 +55,8 @@
       --critical:#E17361;
       --critical-soft:#341F1B;
       --line-budget:#5C6957;
+      --corr-pos:#49B09E;
+      --corr-neg:#D68A4C;
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -16px rgba(0,0,0,0.5);
       color-scheme: dark;
     }
@@ -76,6 +80,8 @@
     --critical:#E17361;
     --critical-soft:#341F1B;
     --line-budget:#5C6957;
+    --corr-pos:#49B09E;
+    --corr-neg:#D68A4C;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -16px rgba(0,0,0,0.5);
     color-scheme: dark;
   }
@@ -237,6 +243,62 @@
   .ov-card .n{ font-size:19px; font-weight:700; }
   .ov-card .l{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-top:2px; }
 
+  /* ---------- Diagnostic analysis ---------- */
+  .diag-grid{ display:grid; grid-template-columns:minmax(260px, 380px) 1fr; gap:24px; align-items:start; }
+  @media (max-width:820px){ .diag-grid{ grid-template-columns:1fr; } }
+  .heatmap-wrap{ display:flex; flex-direction:column; gap:8px; }
+  table.heatmap{ border-collapse:collapse; width:100%; table-layout:fixed; }
+  table.heatmap th, table.heatmap td{ padding:0; text-align:center; }
+  table.heatmap th{
+    font-size:10.5px; font-weight:700; color:var(--text-secondary); letter-spacing:.01em;
+    padding:4px 3px; line-height:1.15; vertical-align:bottom;
+  }
+  table.heatmap th.row-head{ text-align:right; padding-right:8px; vertical-align:middle; }
+  table.heatmap td .cell-inner{
+    aspect-ratio:1; display:flex; align-items:center; justify-content:center;
+    border-radius:6px; font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+    color:var(--text-primary); cursor:default; border:1px solid var(--border);
+  }
+  table.heatmap td .cell-inner.on-diag{ color:var(--text-muted); background:var(--surface-2)!important; font-weight:500; }
+  table.heatmap td .cell-inner.strong-fill{ color:#fff; border-color:transparent; }
+  .heatmap-caption{ font-size:11.5px; color:var(--text-muted); }
+  .heatmap-legend{ display:flex; align-items:center; gap:8px; font-size:11px; color:var(--text-muted); margin-top:2px; }
+  .heatmap-legend .ramp{
+    height:8px; flex:1; border-radius:4px; max-width:180px;
+    background:linear-gradient(90deg, var(--corr-neg), var(--surface-3) 50%, var(--corr-pos));
+  }
+  .interp-panel h3{ font-size:13.5px; margin:0 0 10px; font-weight:700; }
+  .interp-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+  .interp-item{ display:flex; gap:10px; align-items:flex-start; }
+  .interp-rank{
+    flex:none; width:22px; height:22px; border-radius:50%; background:var(--surface-2);
+    border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
+    font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:700; color:var(--text-secondary);
+    margin-top:1px;
+  }
+  .interp-item p{ margin:0; font-size:13px; color:var(--text-secondary); line-height:1.5; }
+  .interp-item p b{ color:var(--text-primary); font-weight:700; }
+  .interp-item .r-tag{
+    font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:700; padding:1px 6px;
+    border-radius:5px; margin-left:4px; white-space:nowrap;
+  }
+  .interp-item .r-tag.pos{ background:var(--accent-soft); color:var(--accent-strong); }
+  .interp-item .r-tag.neg{ background:var(--warning-soft); color:var(--warning); }
+  .diag-subhead{ margin:26px 0 12px; padding-top:20px; border-top:1px solid var(--border); }
+  .var-charts-grid{ display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  @media (max-width:820px){ .var-charts-grid{ grid-template-columns:1fr; } }
+  .var-chart h4{ font-size:12.5px; margin:0 0 10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.04em; }
+  .var-row{ padding:7px 0; border-bottom:1px solid var(--border); }
+  .var-row:last-child{ border-bottom:none; }
+  .var-row-top{ display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:5px; }
+  .var-row-name{ font-size:12.5px; font-weight:600; }
+  .var-row-name span{ font-weight:400; color:var(--text-muted); font-size:11.5px; }
+  .var-row-bottom{ display:flex; align-items:center; gap:10px; }
+  .var-track{ position:relative; flex:1; height:14px; background:var(--surface-2); border-radius:4px; overflow:hidden; }
+  .var-track .center-line{ position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--border); }
+  .var-track .bar{ position:absolute; top:2px; bottom:2px; border-radius:3px; }
+  .var-detail{ flex:none; font-size:11px; color:var(--text-muted); font-family:"IBM Plex Mono",monospace; white-space:nowrap; }
+
   /* ---------- Roadmap ---------- */
   .roadmap{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
   @media (max-width:800px){ .roadmap{ grid-template-columns:1fr; } }
@@ -317,6 +379,41 @@
 
 <div class="panel">
   <div class="section-head">
+    <h2>Diagnostic Analysis</h2>
+    <span class="hint">Correlation &amp; variance, filtered selection</span>
+  </div>
+  <div class="diag-grid">
+    <div class="heatmap-wrap">
+      <table class="heatmap" id="corr-heatmap"></table>
+      <div class="heatmap-legend">
+        <span>&minus;1</span><div class="ramp"></div><span>+1</span>
+      </div>
+      <p class="heatmap-caption">Pearson correlation across weekly store-category observations in the current selection (n = <span id="corr-n">—</span>). Diagonal cells are self-correlation and shown for reference only.</p>
+    </div>
+    <div class="interp-panel">
+      <h3>What the correlations say</h3>
+      <ol class="interp-list" id="interp-list"></ol>
+    </div>
+  </div>
+
+  <div class="diag-subhead section-head">
+    <h2>Variance Analysis — Performance by Store &amp; Category</h2>
+    <span class="hint">Actual sales vs. budget, sorted best to worst</span>
+  </div>
+  <div class="var-charts-grid">
+    <div class="var-chart">
+      <h4>By store</h4>
+      <div id="var-by-store"></div>
+    </div>
+    <div class="var-chart">
+      <h4>By category</h4>
+      <div id="var-by-category"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="section-head">
     <h2>Dataset Coverage</h2>
     <span class="hint">Full network history embedded in this file</span>
   </div>
@@ -326,14 +423,13 @@
 <div class="panel">
   <div class="section-head">
     <h2>Build Roadmap</h2>
-    <span class="hint">This is iteration 1 — structure, embedded data &amp; executive KPIs</span>
+    <span class="hint">Iteration 2 adds correlation &amp; variance diagnostics — remaining below</span>
   </div>
   <div class="roadmap">
-    <div class="rm-item"><span class="num">02</span>OLS regression models for Sales Revenue &amp; Total Expenses with coefficient significance</div>
-    <div class="rm-item"><span class="num">03</span>12-week forecast with confidence intervals, replacing the preliminary trend estimate</div>
-    <div class="rm-item"><span class="num">04</span>Interactive what-if simulator across 6+ business drivers</div>
-    <div class="rm-item"><span class="num">05</span>Correlation matrix across sales &amp; expense drivers</div>
-    <div class="rm-item"><span class="num">06</span>Store / region / category segmentation views</div>
+    <div class="rm-item"><span class="num">03</span>OLS regression models for Sales Revenue &amp; Total Expenses with coefficient significance</div>
+    <div class="rm-item"><span class="num">04</span>12-week forecast with confidence intervals, replacing the preliminary trend estimate</div>
+    <div class="rm-item"><span class="num">05</span>Interactive what-if simulator across 6+ business drivers</div>
+    <div class="rm-item"><span class="num">06</span>Region-level segmentation &amp; top/bottom performer rankings</div>
     <div class="rm-item"><span class="num">07</span>Model validation panel — R², RMSE, MAPE</div>
   </div>
 </div>
@@ -725,6 +821,199 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     });
   }
 
+  /* ---------------- Diagnostic analysis: correlation heatmap ---------------- */
+  const CORR_VARS = [
+    { key:'Foot_Traffic', label:'Foot Traffic' },
+    { key:'Marketing_Spend', label:'Mktg Spend' },
+    { key:'Conversion_Rate', label:'Conv. Rate' },
+    { key:'Discount_Rate', label:'Discount %' },
+    { key:'Sales_Revenue', label:'Sales Rev.' }
+  ];
+  const FULL_NAME = {
+    Foot_Traffic:'Foot traffic', Marketing_Spend:'Marketing spend', Conversion_Rate:'Conversion rate',
+    Discount_Rate:'Discount rate', Sales_Revenue:'Sales revenue'
+  };
+
+  function pearson(xs, ys){
+    const n = xs.length;
+    if(n < 2) return 0;
+    let sx=0, sy=0;
+    for(let i=0;i<n;i++){ sx+=xs[i]; sy+=ys[i]; }
+    const mx = sx/n, my = sy/n;
+    let cov=0, vx=0, vy=0;
+    for(let i=0;i<n;i++){
+      const dx = xs[i]-mx, dy = ys[i]-my;
+      cov += dx*dy; vx += dx*dx; vy += dy*dy;
+    }
+    const denom = Math.sqrt(vx*vy);
+    return denom === 0 ? 0 : cov/denom;
+  }
+
+  function computeCorrelations(rows){
+    const cols = CORR_VARS.map(function(v){
+      const idx = F[v.key];
+      return rows.map(function(r){ return r[idx]; });
+    });
+    const n = CORR_VARS.length, matrix = [];
+    for(let i=0;i<n;i++){
+      matrix.push([]);
+      for(let j=0;j<n;j++) matrix[i][j] = i===j ? 1 : pearson(cols[i], cols[j]);
+    }
+    return matrix;
+  }
+
+  const heatmapEl = document.getElementById('corr-heatmap');
+  const corrNEl = document.getElementById('corr-n');
+
+  function renderHeatmap(matrix, n){
+    corrNEl.textContent = n.toLocaleString();
+    let html = '<tr><th></th>' + CORR_VARS.map(function(v){ return '<th>' + v.label + '</th>'; }).join('') + '</tr>';
+    CORR_VARS.forEach(function(rowVar, i){
+      html += '<tr><th class="row-head">' + rowVar.label + '</th>';
+      CORR_VARS.forEach(function(colVar, j){
+        const r = matrix[i][j];
+        if(i === j){
+          html += '<td><div class="cell-inner on-diag">' + r.toFixed(2) + '</div></td>';
+          return;
+        }
+        const pct = Math.round(Math.abs(r) * 100);
+        const colorVar = r >= 0 ? '--corr-pos' : '--corr-neg';
+        const style = 'background:color-mix(in oklab, var(' + colorVar + ') ' + pct + '%, var(--surface-2));';
+        const cls = 'cell-inner' + (pct >= 45 ? ' strong-fill' : '');
+        html += '<td><div class="' + cls + '" style="' + style + '" title="' + rowVar.label + ' vs ' + colVar.label + ': r = ' + r.toFixed(2) + '">' + r.toFixed(2) + '</div></td>';
+      });
+      html += '</tr>';
+    });
+    heatmapEl.innerHTML = html;
+  }
+
+  const INSIGHT_COPY = {
+    'Foot_Traffic|Sales_Revenue': function(r){
+      return r >= 0
+        ? 'more foot traffic reliably shows up as more revenue in this selection.'
+        : 'traffic and revenue move in opposite directions here — an unusual pattern worth checking against store-level basket size.';
+    },
+    'Marketing_Spend|Sales_Revenue': function(r){
+      return r >= 0
+        ? 'weeks with heavier marketing investment track with higher revenue.'
+        : 'marketing spend and revenue move in opposite directions in this selection — a sign campaigns may be reactive (spent to prop up soft weeks) rather than driving them.';
+    },
+    'Conversion_Rate|Sales_Revenue': function(r){
+      return r < 0
+        ? 'higher conversion rates track with lower revenue here — usually a category-mix effect (categories that convert more often tend to have a lower average transaction value) rather than conversion hurting sales directly.'
+        : 'higher conversion rates track with higher revenue, as expected.';
+    },
+    'Discount_Rate|Sales_Revenue': function(r){
+      if(Math.abs(r) < 0.2) return 'discount depth shows only a weak association with revenue, suggesting markdowns alone are not a reliable sales lever in this selection.';
+      return r >= 0
+        ? 'deeper discounting is associated with higher revenue in this selection.'
+        : 'deeper discounting is associated with lower revenue in this selection — discounting may be concentrated in already-underperforming weeks.';
+    },
+    'Marketing_Spend|Discount_Rate': function(r){
+      return r >= 0.3
+        ? 'marketing spend and discount depth tend to move together — campaigns and markdowns are frequently run at the same time, which will make it harder to isolate either one’s individual effect on sales once the regression model lands.'
+        : 'marketing spend and discount depth are largely independent levers in this selection.';
+    },
+    'Marketing_Spend|Conversion_Rate': function(r){
+      return r <= -0.3
+        ? 'marketing spend tends to rise in weeks when conversion is softer — consistent with campaigns timed to counteract slower selling periods.'
+        : 'marketing spend and conversion rate show little relationship in this selection.';
+    }
+  };
+
+  function strengthWord(absR){
+    if(absR >= 0.5) return 'strong';
+    if(absR >= 0.3) return 'moderate';
+    if(absR >= 0.15) return 'weak';
+    return 'negligible';
+  }
+
+  function corrSentenceHtml(pair){
+    const insight = INSIGHT_COPY[pair.a + '|' + pair.b] || INSIGHT_COPY[pair.b + '|' + pair.a];
+    const strength = strengthWord(Math.abs(pair.r));
+    const dir = pair.r >= 0 ? 'positive' : 'negative';
+    const tagCls = pair.r >= 0 ? 'pos' : 'neg';
+    const rTag = '<span class="r-tag ' + tagCls + '">r = ' + (pair.r>=0?'+':'') + pair.r.toFixed(2) + '</span>';
+    let html = '<b>' + FULL_NAME[pair.a] + '</b> and <b>' + FULL_NAME[pair.b] + '</b> show a ' + strength + ' ' + dir + ' relationship' + rTag;
+    html += insight ? (' — ' + insight(pair.r)) : '.';
+    return html;
+  }
+
+  function renderInterpretation(matrix, n){
+    const list = document.getElementById('interp-list');
+    if(n < 8){
+      list.innerHTML = '<li class="interp-item"><p>Not enough observations in this selection (n = ' + n + ') for a reliable correlation read. Widen the filters to see an interpretation here.</p></li>';
+      return;
+    }
+    const pairs = [];
+    for(let i=0;i<CORR_VARS.length;i++){
+      for(let j=i+1;j<CORR_VARS.length;j++) pairs.push({ a: CORR_VARS[i].key, b: CORR_VARS[j].key, r: matrix[i][j] });
+    }
+    pairs.sort(function(p,q){ return Math.abs(q.r) - Math.abs(p.r); });
+
+    const sentences = pairs.slice(0, 3).map(corrSentenceHtml);
+    const weakest = pairs[pairs.length - 1];
+    if(Math.abs(weakest.r) < 0.15){
+      const rTag = '<span class="r-tag ' + (weakest.r>=0?'pos':'neg') + '">r = ' + (weakest.r>=0?'+':'') + weakest.r.toFixed(2) + '</span>';
+      sentences.push('<b>' + FULL_NAME[weakest.a] + '</b> and <b>' + FULL_NAME[weakest.b] + '</b> show essentially no linear relationship in this selection' + rTag + '.');
+    }
+    list.innerHTML = sentences.map(function(html, i){
+      return '<li class="interp-item"><span class="interp-rank">' + (i+1) + '</span><p>' + html + '</p></li>';
+    }).join('');
+  }
+
+  /* ---------------- Diagnostic analysis: variance by store / category ---------------- */
+  function computeVarianceBy(rows, groupFn){
+    const groups = new Map();
+    const salesIdx = F['Sales_Revenue'], budgetIdx = F['Sales_Budget'];
+    rows.forEach(function(r){
+      const g = groupFn(r);
+      if(!groups.has(g)) groups.set(g, { actual:0, budget:0 });
+      const entry = groups.get(g);
+      entry.actual += r[salesIdx];
+      entry.budget += r[budgetIdx];
+    });
+    const list = [];
+    groups.forEach(function(v, g){
+      list.push({ g: g, actual: v.actual, budget: v.budget, pct: v.budget > 0 ? (v.actual - v.budget) / v.budget : 0 });
+    });
+    list.sort(function(a,b){ return b.pct - a.pct; });
+    return list;
+  }
+
+  function varianceKind(pct){ return pct >= 0 ? 'good' : (pct >= -0.05 ? 'warn' : 'bad'); }
+  function varianceColorVar(pct){ return pct >= 0 ? '--good' : (pct >= -0.05 ? '--warning' : '--critical'); }
+
+  function renderVarianceChart(container, list, labelFn, subLabelFn){
+    if(list.length === 0){ container.innerHTML = '<p class="heatmap-caption">No data in this selection.</p>'; return; }
+    const maxAbs = Math.max(0.02, Math.max.apply(null, list.map(function(d){ return Math.abs(d.pct); })) * 1.15);
+    container.innerHTML = list.map(function(d){
+      const halfPct = Math.min(50, (Math.abs(d.pct) / maxAbs) * 50);
+      const colorVar = varianceColorVar(d.pct);
+      const barStyle = (d.pct >= 0 ? ('left:50%;') : ('left:' + (50-halfPct) + '%;')) + ' width:' + halfPct + '%; background:var(' + colorVar + ');';
+      const sub = subLabelFn(d.g);
+      return '<div class="var-row">' +
+        '<div class="var-row-top"><span class="var-row-name">' + labelFn(d.g) + (sub ? ' <span>' + sub + '</span>' : '') + '</span>' +
+        '<span class="pill ' + varianceKind(d.pct) + '">' + fmtPct1(d.pct) + '</span></div>' +
+        '<div class="var-row-bottom"><div class="var-track"><div class="center-line"></div><div class="bar" style="' + barStyle + '"></div></div>' +
+        '<span class="var-detail">' + fmtCAD0Compact.format(d.actual) + ' / ' + fmtCAD0Compact.format(d.budget) + '</span></div>' +
+      '</div>';
+    }).join('');
+  }
+
+  const varByStoreEl = document.getElementById('var-by-store');
+  const varByCategoryEl = document.getElementById('var-by-category');
+
+  function renderDiagnostics(rows){
+    const matrix = computeCorrelations(rows);
+    renderHeatmap(matrix, rows.length);
+    renderInterpretation(matrix, rows.length);
+    renderVarianceChart(varByStoreEl, computeVarianceBy(rows, function(r){ return r[1]; }),
+      function(idx){ return STORES[idx].id; }, function(idx){ return STORES[idx].city; });
+    renderVarianceChart(varByCategoryEl, computeVarianceBy(rows, function(r){ return r[2]; }),
+      function(idx){ return CATEGORIES[idx]; }, function(){ return ''; });
+  }
+
   /* ---------------- Header meta (static, full dataset) ---------------- */
   document.getElementById('meta-span').textContent = fmtDate(WEEKS[0]) + ' – ' + fmtDate(WEEKS[WEEKS.length-1]);
   document.getElementById('meta-rows').textContent = ROWS.length.toLocaleString() + ' rows · ' + STORES.length + ' stores';
@@ -736,6 +1025,7 @@ const DATA = {"stores":[{"id":"CGY01","city":"Calgary","region":"Prairies","form
     renderKPIs(computeKPIs(filt));
     renderChart(rows, filt);
     renderOverview(filt, rows);
+    renderDiagnostics(rows);
   }
 
   regionSel.addEventListener('change', function(){ rebuildStoreOptions(); recalc(); });
